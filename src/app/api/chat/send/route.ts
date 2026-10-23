@@ -21,6 +21,10 @@ export async function POST(req: NextRequest) {
       text: text.trim(),
     });
 
+    if (!result.success) {
+      return NextResponse.json({ error: result.error || 'Failed to send' }, { status: 403 });
+    }
+
     return NextResponse.json(result);
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : 'Unknown error';

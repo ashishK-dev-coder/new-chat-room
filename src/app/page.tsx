@@ -12,15 +12,24 @@ import { SettingsModal } from '@/components/SettingsModal';
 import { ChatMessage } from '@/lib/chatStore';
 
 export default function WordChatApp() {
-  // Session & Identity: Each browser tab gets a strictly unique in-memory ID
+  // Session & Identity: Stable author identity per device / browser
   const [tabAuthorId, setTabAuthorId] = useState<string>('');
   const tabAuthorIdRef = useRef<string>('');
 
   useEffect(() => {
-    // Generate unique ID in memory for this tab instance
-    const uniqueId = `tab_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-    setTabAuthorId(uniqueId);
-    tabAuthorIdRef.current = uniqueId;
+    // Generate or retrieve stable unique author ID per device
+    let authorId: string | null = null;
+    try {
+      authorId = localStorage.getItem('word_author_session_id');
+      if (!authorId) {
+        authorId = `author_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+        localStorage.setItem('word_author_session_id', authorId);
+      }
+    } catch {
+      authorId = `author_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    }
+    setTabAuthorId(authorId);
+    tabAuthorIdRef.current = authorId;
   }, []);
 
   // Room & Protection
@@ -389,7 +398,11 @@ export default function WordChatApp() {
           } else if (data.type === 'clear') {
             setMessages([]);
           } else if (data.type === 'presence') {
-            setParticipantCount(data.clientCount || 1);
+            // Strictly clamp to at most 2 co-authors
+            const count = Math.min(2, Math.max(1, Number(data.clientCount) || 1));
+            setParticipantCount(count);
+          } else if (data.type === 'error') {
+            console.warn('Room Notice:', data.error);
           }
         } catch {
           // ignore keep-alive

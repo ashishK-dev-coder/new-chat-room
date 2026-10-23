@@ -109,25 +109,30 @@ export const WordTitleBar: React.FC<WordTitleBarProps> = ({
           </button>
         )}
 
-        {/* Co-authoring Presence Badges */}
-        <div
-          title={`${participantCount} co-author${participantCount === 1 ? '' : 's'} active`}
-          className="flex items-center space-x-1 px-1.5 py-0.5 rounded hover:bg-white/10 transition cursor-pointer mr-1"
-        >
-          <div className="flex -space-x-1.5">
-            <div className="w-5 h-5 rounded-full bg-[#0078d4] text-white text-[9px] font-bold flex items-center justify-center border border-[#185abd]" title="A. Kumar">
-              AK
-            </div>
-            {participantCount > 1 && (
-              <div className="w-5 h-5 rounded-full bg-[#107c41] text-white text-[9px] font-bold flex items-center justify-center border border-[#185abd]" title="M. Rao">
-                MR
+        {/* Co-authoring Presence Badges (Disguised 2-Person Word Collaboration) */}
+        {(() => {
+          const displayCount = Math.min(2, Math.max(1, participantCount));
+          return (
+            <div
+              title={`${displayCount} co-author${displayCount === 1 ? '' : 's'} active`}
+              className="flex items-center space-x-1 px-1.5 py-0.5 rounded hover:bg-white/10 transition cursor-pointer mr-1"
+            >
+              <div className="flex -space-x-1.5">
+                <div className="w-5 h-5 rounded-full bg-[#0078d4] text-white text-[9px] font-bold flex items-center justify-center border border-[#185abd]" title="A. Kumar">
+                  AK
+                </div>
+                {displayCount > 1 && (
+                  <div className="w-5 h-5 rounded-full bg-[#107c41] text-white text-[9px] font-bold flex items-center justify-center border border-[#185abd]" title="M. Rao">
+                    MR
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-          <span className="text-[10px] text-white/80 hidden sm:inline ml-1 font-medium">
-            {participantCount} {participantCount === 1 ? 'Author' : 'Authors'}
-          </span>
-        </div>
+              <span className="text-[10px] text-white/80 hidden sm:inline ml-1 font-medium">
+                {displayCount} {displayCount === 1 ? 'Author' : 'Authors'}
+              </span>
+            </div>
+          );
+        })()}
 
         {/* Document Editing status */}
         <button

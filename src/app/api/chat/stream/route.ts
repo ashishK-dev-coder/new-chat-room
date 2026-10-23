@@ -1,9 +1,10 @@
 import { NextRequest } from 'next/server';
-import { getOrCreateRoom, getRoomMessages, subscribeToRoom } from '@/lib/chatStore';
+import { getOrCreateRoom, getRoomMessages, subscribeToRoom, touchAuthorPresence } from '@/lib/chatStore';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const roomId = searchParams.get('room') || 'default-room';
+  const senderId = searchParams.get('senderId') || `author_${Date.now()}`;
 
   // Ensure room exists
   getOrCreateRoom(roomId);
@@ -15,16 +16,40 @@ export async function GET(req: NextRequest) {
   const stream = new ReadableStream({
     start(controller) {
       // 1. Function to push SSE chunks
-      const sendChunk = (data: string) => {
+      const sendChunk = (data: string): boolean => {
         try {
           controller.enqueue(encoder.encode(data));
+          return true;
         } catch {
-          // stream closed
+          if (cleanup) {
+            cleanup();
+            cleanup = null;
+          }
+          return false;
         }
       };
 
-      // 2. Register client listener
-      cleanup = subscribeToRoom(roomId, sendChunk);
+      // 2. Register client listener with senderId and 2-person limit
+      const subResult = subscribeToRoom(roomId, senderId, sendChunk);
+
+      if (!subResult.allowed) {
+        // Room capacity exceeded (strictly 2 authors allowed)
+        sendChunk(
+          `data: ${JSON.stringify({
+            type: 'error',
+            error: 'Document capacity reached: strictly 2 co-authors allowed.',
+            clientCount: 2,
+          })}\n\n`
+        );
+        try {
+          controller.close();
+        } catch {
+          // ignore
+        }
+        return;
+      }
+
+      cleanup = subResult.unsubscribe;
 
       // 3. Immediately send current messages (max 4)
       const currentMessages = getRoomMessages(roomId);
@@ -34,18 +59,32 @@ export async function GET(req: NextRequest) {
       });
       sendChunk(`data: ${initPayload}\n\n`);
 
-      // 4. Keep-alive heartbeat every 15 seconds to prevent browser timeout
+      // 4. Keep-alive heartbeat every 15 seconds to prevent browser & Vercel timeout
       keepAliveTimer = setInterval(() => {
         try {
           controller.enqueue(encoder.encode(`: ping\n\n`));
+          touchAuthorPresence(roomId, senderId);
         } catch {
-          if (keepAliveTimer) clearInterval(keepAliveTimer);
+          if (keepAliveTimer) {
+            clearInterval(keepAliveTimer);
+            keepAliveTimer = null;
+          }
+          if (cleanup) {
+            cleanup();
+            cleanup = null;
+          }
         }
       }, 15000);
     },
     cancel() {
-      if (keepAliveTimer) clearInterval(keepAliveTimer);
-      if (cleanup) cleanup();
+      if (keepAliveTimer) {
+        clearInterval(keepAliveTimer);
+        keepAliveTimer = null;
+      }
+      if (cleanup) {
+        cleanup();
+        cleanup = null;
+      }
     },
   });
 
