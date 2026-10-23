@@ -411,11 +411,28 @@ export default function WordChatApp() {
               setParticipantCount(count);
             }
           } else if (data.type === 'message') {
+            const incomingMsg = data.message;
             // Append incoming message and keep ONLY latest 4
             setMessages((prev) => {
-              const exists = prev.some((m) => m.id === data.message.id);
-              if (exists) return prev;
-              const updated = [...prev, data.message];
+              const alreadyExists = prev.some((m) => m.id === incomingMsg.id);
+              if (alreadyExists) return prev;
+
+              // If this was our own optimistic message, replace it with confirmed message
+              const optIdx = prev.findIndex(
+                (m) =>
+                  m.id.startsWith('opt-') &&
+                  m.senderId === incomingMsg.senderId &&
+                  m.text === incomingMsg.text
+              );
+
+              let updated: ChatMessage[];
+              if (optIdx !== -1) {
+                updated = [...prev];
+                updated[optIdx] = incomingMsg;
+              } else {
+                updated = [...prev, incomingMsg];
+              }
+
               return updated.slice(-4);
             });
 
@@ -468,11 +485,28 @@ export default function WordChatApp() {
     };
   }, [roomId, tabAuthorId, playNotificationSound]);
 
-  // Send message handler
-  const handleSendMessage = async (text: string) => {
+  // Send message handler with 0ms instant optimistic update (zero lag after 4 messages)
+  const handleSendMessage = async (text: string, replyTo?: ChatMessage['replyTo']) => {
     if (!text.trim()) return;
 
     const activeId = tabAuthorIdRef.current || tabAuthorId || `tab_${Date.now()}`;
+    const trimmedText = text.trim();
+    const tempId = `opt-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+
+    const optimisticMsg: ChatMessage = {
+      id: tempId,
+      senderId: activeId,
+      senderName: 'Author',
+      text: trimmedText,
+      timestamp: Date.now(),
+      replyTo,
+    };
+
+    // Instant 0ms UI update: message appears immediately, sliding the 4-slot window with zero delay
+    setMessages((prev) => {
+      const updated = [...prev, optimisticMsg];
+      return updated.slice(-4);
+    });
 
     try {
       const res = await fetch('/api/chat/send', {
@@ -482,8 +516,9 @@ export default function WordChatApp() {
           roomId,
           senderId: activeId,
           senderName: 'Author',
-          text,
+          text: trimmedText,
           password: roomPassword,
+          replyTo,
         }),
       });
 

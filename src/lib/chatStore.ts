@@ -6,6 +6,11 @@ export interface ChatMessage {
   senderName: string;
   text: string;
   timestamp: number;
+  replyTo?: {
+    id: string;
+    senderName: string;
+    text: string;
+  };
 }
 
 export interface ClientSubscriber {
@@ -160,7 +165,16 @@ export function subscribeToRoom(
 // Add message with strict 4-message ceiling and 2-person room enforcement
 export function addMessageToRoom(
   roomId: string,
-  message: { senderId: string; senderName: string; text: string }
+  message: {
+    senderId: string;
+    senderName: string;
+    text: string;
+    replyTo?: {
+      id: string;
+      senderName: string;
+      text: string;
+    };
+  }
 ): { success: boolean; messages: ChatMessage[]; error?: string } {
   const room = getOrCreateRoom(roomId);
 
@@ -179,6 +193,7 @@ export function addMessageToRoom(
     senderName: message.senderName || 'Anonymous',
     text: message.text,
     timestamp: Date.now(),
+    replyTo: message.replyTo,
   };
 
   room.messages.push(newMsg);

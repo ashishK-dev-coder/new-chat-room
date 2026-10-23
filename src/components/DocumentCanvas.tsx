@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useRef, useEffect, useState } from 'react';
+import { CornerUpLeft, X } from 'lucide-react';
 import { ChatMessage } from '@/lib/chatStore';
 import { FontSettings } from './WordRibbon';
 
@@ -10,7 +11,7 @@ interface DocumentCanvasProps {
   isUnlocked: boolean;
   fontSettings: FontSettings;
   stealthMode: 'coauthor' | 'plain' | 'memo';
-  onSendMessage: (text: string) => void;
+  onSendMessage: (text: string, replyTo?: ChatMessage['replyTo']) => void;
   onRequireUnlock: () => void;
   onPanicClear: () => void;
   peerTyping: boolean;
@@ -76,6 +77,12 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   darkMode = false,
 }) => {
   const [inputText, setInputText] = useState('');
+  const [taggedMessage, setTaggedMessage] = useState<{
+    id: string;
+    senderName: string;
+    text: string;
+    prefix?: string;
+  } | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -100,6 +107,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
       if (isPanicKey(e.key, e.code)) {
         e.preventDefault();
         setInputText('');
+        setTaggedMessage(null);
         onPanicClear();
       }
     };
@@ -133,6 +141,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
     if (isPanicKey(e.key, e.code)) {
       e.preventDefault();
       setInputText('');
+      setTaggedMessage(null);
       onPanicClear();
       return;
     }
@@ -151,8 +160,20 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
       e.preventDefault();
       const trimmed = inputText.trim();
       if (trimmed) {
-        onSendMessage(trimmed);
+        const replyPayload = taggedMessage
+          ? {
+              id: taggedMessage.id,
+              senderName: taggedMessage.prefix || taggedMessage.senderName,
+              text: taggedMessage.text,
+            }
+          : undefined;
+
+        onSendMessage(trimmed, replyPayload);
         setInputText('');
+        setTaggedMessage(null);
+        setTimeout(() => {
+          inputRef.current?.focus();
+        }, 10);
       }
     }
   };
@@ -256,7 +277,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                       {/* 1. Existing Chat Message in this Slot */}
                       {currentSlotMsg && (
                         <div
-                          className={`py-1.5 px-2.5 rounded-xs transition-colors my-1 ${
+                          className={`group relative py-1.5 px-2.5 rounded-xs transition-colors my-1 ${
                             darkMode
                               ? stealthMode === 'coauthor'
                                 ? currentSlotMsg.senderId === currentUserId
@@ -270,71 +291,142 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                               : 'border-l-2 border-[#9ca3af] bg-[#fafafa]'
                           }`}
                         >
-                          <div className={`flex items-start text-[10.5pt] leading-relaxed select-text ${
+                          {/* Quoted / Tagged reference if replying to an earlier clause */}
+                          {currentSlotMsg.replyTo && (
+                            <div className={`flex items-center space-x-1.5 text-[8.5pt] mb-1 pl-1.5 border-l-2 select-none opacity-85 ${
+                              darkMode
+                                ? 'border-[#4ba3f4]/70 text-[#93c5fd]'
+                                : 'border-[#0078d4]/70 text-[#0284c7]'
+                            }`}>
+                              <CornerUpLeft className="w-2.5 h-2.5 shrink-0" />
+                              <span className="font-semibold shrink-0">
+                                {currentSlotMsg.replyTo.senderName}:
+                              </span>
+                              <span className="truncate italic max-w-[280px]">
+                                "{currentSlotMsg.replyTo.text}"
+                              </span>
+                            </div>
+                          )}
+
+                          <div className={`flex items-start justify-between text-[10.5pt] leading-relaxed select-text ${
                             darkMode ? 'text-[#f3f4f6]' : 'text-[#111827]'
                           }`}>
-                            <span className={`font-semibold mr-2 shrink-0 select-none ${
-                              darkMode ? 'text-[#9ca3af]' : 'text-[#4b5563]'
-                            }`}>
-                              {stealthMode === 'plain'
-                                ? '•'
-                                : `• ${section.notePrefix}:`}
-                            </span>
-                            <span
-                              className={`break-words ${
-                                fontSettings.bold ? 'font-bold' : ''
-                              } ${fontSettings.italic ? 'italic' : ''} ${
-                                fontSettings.underline ? 'underline' : ''
+                            <div className="flex items-start flex-1 min-w-0 pr-1">
+                              <span className={`font-semibold mr-2 shrink-0 select-none ${
+                                darkMode ? 'text-[#9ca3af]' : 'text-[#4b5563]'
+                              }`}>
+                                {stealthMode === 'plain'
+                                  ? '•'
+                                  : `• ${section.notePrefix}:`}
+                              </span>
+                              <span
+                                className={`break-words ${
+                                  fontSettings.bold ? 'font-bold' : ''
+                                } ${fontSettings.italic ? 'italic' : ''} ${
+                                  fontSettings.underline ? 'underline' : ''
+                                }`}
+                              >
+                                {currentSlotMsg.text}
+                              </span>
+                            </div>
+
+                            {/* Backward reply arrow to tag this message */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setTaggedMessage({
+                                  id: currentSlotMsg.id,
+                                  senderName: currentSlotMsg.senderId === currentUserId ? 'You' : 'Author',
+                                  text: currentSlotMsg.text,
+                                  prefix: section.notePrefix,
+                                });
+                                setTimeout(() => inputRef.current?.focus(), 10);
+                              }}
+                              title="Tag / Reply to this clause"
+                              className={`opacity-30 hover:opacity-100 group-hover:opacity-100 transition-opacity p-0.5 rounded cursor-pointer shrink-0 ml-1.5 ${
+                                darkMode
+                                  ? 'hover:bg-white/10 text-white/70 hover:text-[#4ba3f4]'
+                                  : 'hover:bg-black/5 text-[#64748b] hover:text-[#0078d4]'
                               }`}
                             >
-                              {currentSlotMsg.text}
-                            </span>
+                              <CornerUpLeft className="w-3 h-3" />
+                            </button>
                           </div>
                         </div>
                       )}
 
                       {/* 2. Active Inline Typing Input */}
                       {isThisActiveInputSlot && (
-                        <div className={`flex items-start mt-1.5 py-1 px-2 border-l-2 rounded-xs ${
+                        <div className={`flex flex-col mt-1.5 py-1 px-2 border-l-2 rounded-xs ${
                           darkMode
                             ? 'border-[#4ba3f4] bg-[#1e293b]/40'
                             : 'border-[#0078d4] bg-[#f0f9ff]/40'
                         }`}>
-                          <span className={`font-medium mr-2 select-none shrink-0 text-[10.5pt] ${
-                            darkMode ? 'text-[#9ca3af]' : 'text-[#64748b]'
-                          }`}>
-                            {stealthMode === 'plain'
-                              ? '•'
-                              : `• ${section.notePrefix}:`}
-                          </span>
+                          {/* Tagged message citation pill */}
+                          {taggedMessage && (
+                            <div className={`flex items-center justify-between text-[8.5pt] px-2 py-0.5 mb-1.5 rounded border-l-2 select-none ${
+                              darkMode
+                                ? 'bg-[#1e293b] border-[#4ba3f4] text-[#93c5fd]'
+                                : 'bg-[#f0f9ff] border-[#0078d4] text-[#0369a1]'
+                            }`}>
+                              <div className="flex items-center space-x-1.5 truncate">
+                                <CornerUpLeft className="w-2.5 h-2.5 shrink-0" />
+                                <span className="font-semibold shrink-0">
+                                  Tagging {taggedMessage.prefix || 'Clause'}:
+                                </span>
+                                <span className="truncate italic max-w-[260px]">
+                                  "{taggedMessage.text}"
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setTaggedMessage(null)}
+                                className="ml-2 opacity-60 hover:opacity-100 cursor-pointer p-0.5"
+                                title="Remove tag"
+                              >
+                                <X className="w-2.5 h-2.5" />
+                              </button>
+                            </div>
+                          )}
 
-                          <div className="flex-1 relative">
-                            <textarea
-                              ref={inputRef}
-                              value={inputText}
-                              onChange={(e) => setInputText(e.target.value)}
-                              onKeyDown={handleKeyDown}
-                              placeholder="Type technical clause and press Enter to append..."
-                              rows={1}
-                              className={`w-full resize-none bg-transparent outline-none border-none p-0 leading-relaxed text-[10.5pt] ${
-                                darkMode
-                                  ? 'text-[#f3f4f6] placeholder-[#6b7280]'
-                                  : 'text-[#111827] placeholder-[#9ca3af]'
-                              }`}
-                              style={{
-                                fontFamily: getFontFamilyStyle(),
-                                fontSize: `${fontSettings.size}pt`,
-                              }}
-                            />
+                          <div className="flex items-start">
+                            <span className={`font-medium mr-2 select-none shrink-0 text-[10.5pt] ${
+                              darkMode ? 'text-[#9ca3af]' : 'text-[#64748b]'
+                            }`}>
+                              {stealthMode === 'plain'
+                                ? '•'
+                                : `• ${section.notePrefix}:`}
+                            </span>
 
-                            {/* Blinking Word text cursor */}
-                            {inputText.length === 0 && (
-                              <span
-                                className={`word-cursor inline-block w-[1.5px] h-[16px] absolute left-0 top-0.5 pointer-events-none ${
-                                  darkMode ? 'bg-[#f3f4f6]' : 'bg-[#111827]'
+                            <div className="flex-1 relative">
+                              <textarea
+                                ref={inputRef}
+                                value={inputText}
+                                onChange={(e) => setInputText(e.target.value)}
+                                onKeyDown={handleKeyDown}
+                                placeholder="Type technical clause and press Enter to append..."
+                                rows={1}
+                                className={`w-full resize-none bg-transparent outline-none border-none p-0 leading-relaxed text-[10.5pt] ${
+                                  darkMode
+                                    ? 'text-[#f3f4f6] placeholder-[#6b7280]'
+                                    : 'text-[#111827] placeholder-[#9ca3af]'
                                 }`}
+                                style={{
+                                  fontFamily: getFontFamilyStyle(),
+                                  fontSize: `${fontSettings.size}pt`,
+                                }}
                               />
-                            )}
+
+                              {/* Blinking Word text cursor */}
+                              {inputText.length === 0 && (
+                                <span
+                                  className={`word-cursor inline-block w-[1.5px] h-[16px] absolute left-0 top-0.5 pointer-events-none ${
+                                    darkMode ? 'bg-[#f3f4f6]' : 'bg-[#111827]'
+                                  }`}
+                                />
+                              )}
+                            </div>
                           </div>
                         </div>
                       )}
