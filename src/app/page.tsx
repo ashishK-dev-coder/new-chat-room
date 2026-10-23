@@ -404,25 +404,41 @@ export default function WordChatApp() {
             // Only update messages if server actually has messages
             // Never overwrite existing local messages with an empty array upon server cold-start or reconnect!
             if (Array.isArray(data.messages) && data.messages.length > 0) {
-              setMessages(data.messages.slice(-4));
+              const confirmed = data.messages.map((m: ChatMessage) => ({
+                ...m,
+                status: m.status || 'delivered',
+              }));
+              setMessages(confirmed.slice(-4));
             }
             if (data.clientCount !== undefined) {
               const count = Math.min(2, Math.max(1, Number(data.clientCount) || 1));
               setParticipantCount(count);
             }
           } else if (data.type === 'message') {
-            const incomingMsg = data.message;
+            const incomingMsg: ChatMessage = {
+              ...data.message,
+              status: 'delivered', // Confirmed from server broadcast
+            };
             // Append incoming message and keep ONLY latest 4
             setMessages((prev) => {
-              const alreadyExists = prev.some((m) => m.id === incomingMsg.id);
-              if (alreadyExists) return prev;
+              // 1. If this exact message ID is already present (e.g. from optimistic send)
+              const existingIdx = prev.findIndex((m) => m.id === incomingMsg.id);
+              if (existingIdx !== -1) {
+                const updated = [...prev];
+                updated[existingIdx] = {
+                  ...updated[existingIdx],
+                  ...incomingMsg,
+                  status: 'delivered',
+                };
+                return updated.slice(-4);
+              }
 
-              // If this was our own optimistic message, replace it with confirmed message
+              // 2. If this was our own optimistic message, replace it with confirmed message
               const optIdx = prev.findIndex(
                 (m) =>
-                  m.id.startsWith('opt-') &&
                   m.senderId === incomingMsg.senderId &&
-                  m.text === incomingMsg.text
+                  m.text === incomingMsg.text &&
+                  (m.status === 'pending' || m.id.startsWith('opt-'))
               );
 
               let updated: ChatMessage[];
@@ -485,24 +501,26 @@ export default function WordChatApp() {
     };
   }, [roomId, tabAuthorId, playNotificationSound]);
 
-  // Send message handler with 0ms instant optimistic update (zero lag after 4 messages)
+  // Send message handler with 0ms instant optimistic update + acknowledgment tracking
   const handleSendMessage = async (text: string, replyTo?: ChatMessage['replyTo']) => {
     if (!text.trim()) return;
 
     const activeId = tabAuthorIdRef.current || tabAuthorId || `tab_${Date.now()}`;
     const trimmedText = text.trim();
-    const tempId = `opt-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    // Unique deterministic message ID generated upfront
+    const messageId = `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
     const optimisticMsg: ChatMessage = {
-      id: tempId,
+      id: messageId,
       senderId: activeId,
       senderName: 'Author',
       text: trimmedText,
       timestamp: Date.now(),
+      status: 'pending', // Starts with pending...
       replyTo,
     };
 
-    // Instant 0ms UI update: message appears immediately, sliding the 4-slot window with zero delay
+    // Instant 0ms UI update: message appears immediately with pending... status
     setMessages((prev) => {
       const updated = [...prev, optimisticMsg];
       return updated.slice(-4);
@@ -513,6 +531,7 @@ export default function WordChatApp() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          id: messageId,
           roomId,
           senderId: activeId,
           senderName: 'Author',
@@ -523,16 +542,35 @@ export default function WordChatApp() {
       });
 
       if (!res.ok) {
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         if (res.status === 401) {
           setIsUnlocked(false);
           setShowPasswordModal(true);
         } else {
-          console.error('Failed to send:', data.error);
+          console.error('Failed to send:', data?.error);
         }
+        // Mark as failed so user can click to retry
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === messageId ? { ...m, status: 'failed' } : m
+          )
+        );
+      } else {
+        // Confirmed & acknowledged by server!
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === messageId ? { ...m, status: 'delivered' } : m
+          )
+        );
       }
     } catch (err) {
       console.error('Network error sending message:', err);
+      // Mark as failed so user can click to retry
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === messageId ? { ...m, status: 'failed' } : m
+        )
+      );
     }
   };
 
@@ -609,6 +647,7 @@ export default function WordChatApp() {
         onPanic={handlePanicLock}
         darkMode={darkMode}
         toggleDarkMode={toggleDarkMode}
+        isSaving={messages.some((m) => m.status === 'pending')}
       />
 
       {/* 2. MS Word Ribbon (Tabs + Toolbars) */}

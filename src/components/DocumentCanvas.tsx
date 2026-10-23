@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useRef, useEffect, useState } from 'react';
-import { CornerUpLeft, X } from 'lucide-react';
+import { CornerUpLeft, X, Clock, CheckCheck, AlertCircle } from 'lucide-react';
 import { ChatMessage } from '@/lib/chatStore';
 import { FontSettings } from './WordRibbon';
 
@@ -330,28 +330,80 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                               </span>
                             </div>
 
-                            {/* Backward reply arrow to tag this message */}
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setTaggedMessage({
-                                  id: currentSlotMsg.id,
-                                  senderName: currentSlotMsg.senderId === currentUserId ? 'You' : 'Author',
-                                  text: currentSlotMsg.text,
-                                  prefix: section.notePrefix,
-                                });
-                                setTimeout(() => inputRef.current?.focus(), 10);
-                              }}
-                              title="Tag / Reply to this clause"
-                              className={`opacity-30 hover:opacity-100 group-hover:opacity-100 transition-opacity p-0.5 rounded cursor-pointer shrink-0 ml-1.5 ${
-                                darkMode
-                                  ? 'hover:bg-white/10 text-white/70 hover:text-[#4ba3f4]'
-                                  : 'hover:bg-black/5 text-[#64748b] hover:text-[#0078d4]'
-                              }`}
-                            >
-                              <CornerUpLeft className="w-3 h-3" />
-                            </button>
+                            <div className="flex items-center shrink-0 ml-2 space-x-1.5 self-center">
+                              {/* Message Delivery & Confirmation Status Indicator */}
+                              {currentSlotMsg.status === 'pending' ? (
+                                <span
+                                  className={`inline-flex items-center space-x-1 text-[7.5pt] font-mono select-none px-1.5 py-0.5 rounded tracking-tight transition-all ${
+                                    darkMode
+                                      ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                                      : 'bg-amber-50 text-amber-700 border border-amber-200'
+                                  }`}
+                                  title="Sending clause... Pending server confirmation"
+                                >
+                                  <Clock className="w-2.5 h-2.5 animate-spin" style={{ animationDuration: '2.5s' }} />
+                                  <span>pending...</span>
+                                </span>
+                              ) : currentSlotMsg.status === 'failed' ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onSendMessage(currentSlotMsg.text, currentSlotMsg.replyTo);
+                                  }}
+                                  className={`inline-flex items-center space-x-1 text-[7.5pt] select-none px-1.5 py-0.5 rounded cursor-pointer transition-all ${
+                                    darkMode
+                                      ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 hover:bg-rose-500/30'
+                                      : 'bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100'
+                                  }`}
+                                  title="Delivery failed. Click to retry"
+                                >
+                                  <AlertCircle className="w-2.5 h-2.5" />
+                                  <span>failed (retry)</span>
+                                </button>
+                              ) : (
+                                <span
+                                  className={`inline-flex items-center space-x-1 text-[7.5pt] select-none px-1.5 py-0.5 rounded transition-all ${
+                                    darkMode
+                                      ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
+                                      : 'text-emerald-600 bg-emerald-50 border border-emerald-200/80'
+                                  }`}
+                                  title={
+                                    currentSlotMsg.senderId === currentUserId
+                                      ? 'Clause confirmed & acknowledged by server'
+                                      : 'Clause delivered from co-author'
+                                  }
+                                >
+                                  <CheckCheck className="w-3 h-3 stroke-[2.2]" />
+                                  <span className="font-medium tracking-tight">
+                                    {currentSlotMsg.senderId === currentUserId ? 'acknowledged' : 'delivered'}
+                                  </span>
+                                </span>
+                              )}
+
+                              {/* Backward reply arrow to tag this message */}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setTaggedMessage({
+                                    id: currentSlotMsg.id,
+                                    senderName: currentSlotMsg.senderId === currentUserId ? 'You' : 'Author',
+                                    text: currentSlotMsg.text,
+                                    prefix: section.notePrefix,
+                                  });
+                                  setTimeout(() => inputRef.current?.focus(), 10);
+                                }}
+                                title="Tag / Reply to this clause"
+                                className={`opacity-30 hover:opacity-100 group-hover:opacity-100 transition-opacity p-0.5 rounded cursor-pointer shrink-0 ${
+                                  darkMode
+                                    ? 'hover:bg-white/10 text-white/70 hover:text-[#4ba3f4]'
+                                    : 'hover:bg-black/5 text-[#64748b] hover:text-[#0078d4]'
+                                }`}
+                              >
+                                <CornerUpLeft className="w-3 h-3" />
+                              </button>
+                            </div>
                           </div>
                         </div>
                       )}

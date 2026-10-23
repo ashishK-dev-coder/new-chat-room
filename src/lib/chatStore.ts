@@ -6,6 +6,7 @@ export interface ChatMessage {
   senderName: string;
   text: string;
   timestamp: number;
+  status?: 'pending' | 'delivered' | 'failed';
   replyTo?: {
     id: string;
     senderName: string;
@@ -166,16 +167,18 @@ export function subscribeToRoom(
 export function addMessageToRoom(
   roomId: string,
   message: {
+    id?: string;
     senderId: string;
     senderName: string;
     text: string;
+    status?: 'pending' | 'delivered' | 'failed';
     replyTo?: {
       id: string;
       senderName: string;
       text: string;
     };
   }
-): { success: boolean; messages: ChatMessage[]; error?: string } {
+): { success: boolean; messages: ChatMessage[]; message?: ChatMessage; error?: string } {
   const room = getOrCreateRoom(roomId);
 
   // Enforce 2-person limit
@@ -188,11 +191,12 @@ export function addMessageToRoom(
   }
 
   const newMsg: ChatMessage = {
-    id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    id: message.id || `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
     senderId: message.senderId,
     senderName: message.senderName || 'Anonymous',
     text: message.text,
     timestamp: Date.now(),
+    status: 'delivered', // Acknowledged on server
     replyTo: message.replyTo,
   };
 
@@ -227,7 +231,7 @@ export function addMessageToRoom(
 
   deadIds.forEach((id) => room.clients.delete(id));
 
-  return { success: true, messages: room.messages };
+  return { success: true, messages: room.messages, message: newMsg };
 }
 
 export function clearRoomMessages(roomId: string, senderId?: string): { success: boolean } {

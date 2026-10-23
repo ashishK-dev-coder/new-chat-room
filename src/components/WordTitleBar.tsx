@@ -26,6 +26,7 @@ interface WordTitleBarProps {
   onPanic: () => void;
   darkMode?: boolean;
   toggleDarkMode?: () => void;
+  isSaving?: boolean;
 }
 
 export const WordTitleBar: React.FC<WordTitleBarProps> = ({
@@ -37,6 +38,7 @@ export const WordTitleBar: React.FC<WordTitleBarProps> = ({
   onPanic,
   darkMode = false,
   toggleDarkMode,
+  isSaving = false,
 }) => {
   return (
     <header
@@ -82,7 +84,14 @@ export const WordTitleBar: React.FC<WordTitleBarProps> = ({
           <span className="font-semibold text-xs tracking-wide">
             {docTitle}
           </span>
-          <span className="text-white/60 text-[11px]">- Saved to OneDrive</span>
+          {isSaving ? (
+            <span className="text-amber-200 text-[11px] flex items-center space-x-1 animate-pulse select-none">
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-300"></span>
+              <span>- Saving...</span>
+            </span>
+          ) : (
+            <span className="text-white/60 text-[11px] select-none">- Saved to OneDrive</span>
+          )}
         </div>
       </div>
 
