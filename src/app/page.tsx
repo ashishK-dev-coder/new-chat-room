@@ -291,13 +291,50 @@ export default function WordChatApp() {
     }, 0);
   }, [messages, isUnlocked]);
 
-  // Panic Wipe: Clears chat messages AND logs out immediately with NO popup
-  const handlePanicClear = useCallback(async () => {
+  // Load cached messages on mount (prevents cold-start blanking)
+  useEffect(() => {
+    try {
+      const cached = sessionStorage.getItem(`word_chat_msgs_${roomId}`);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setMessages(parsed.slice(-4));
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, [roomId]);
+
+  // Sync messages to local session cache whenever messages change
+  useEffect(() => {
+    try {
+      if (messages.length > 0) {
+        sessionStorage.setItem(`word_chat_msgs_${roomId}`, JSON.stringify(messages));
+      }
+    } catch {
+      // ignore
+    }
+  }, [messages, roomId]);
+
+  // Local Panic Lock: Instantly conceals all messages and logs out locally with NO popup
+  // Keeps server messages intact so other laptop is NOT disrupted and messages can be restored on unlock
+  const handlePanicLock = useCallback(() => {
+    setIsUnlocked(false);
+    setShowPasswordModal(false);
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem(`word_unlocked_${roomId}`);
+    }
+  }, [roomId]);
+
+  // Explicit Room Wipe: When intentionally clearing all messages for both laptops
+  const handleRoomWipe = useCallback(async () => {
     setMessages([]);
     setIsUnlocked(false);
     setShowPasswordModal(false);
     if (typeof window !== 'undefined') {
       sessionStorage.removeItem(`word_unlocked_${roomId}`);
+      sessionStorage.removeItem(`word_chat_msgs_${roomId}`);
     }
 
     try {
@@ -310,32 +347,25 @@ export default function WordChatApp() {
         }),
       });
     } catch (err) {
-      console.error('Background clear error:', err);
+      console.error('Room clear error:', err);
     }
   }, [roomId]);
 
-  // Check if pressed key is Ctrl, Alt, Window (Meta), Fn, or Escape
+  // Check if pressed key is dedicated panic key: Window (Meta/OS), Fn, or Escape
   const isPanicKey = (e: KeyboardEvent): boolean => {
     const key = e.key;
     const code = e.code;
     return (
-      key === 'Control' ||
-      code === 'ControlLeft' ||
-      code === 'ControlRight' ||
-      key === 'Alt' ||
-      key === 'AltGraph' ||
-      code === 'AltLeft' ||
-      code === 'AltRight' ||
       key === 'Meta' ||
       key === 'OS' ||
       code === 'MetaLeft' ||
       code === 'MetaRight' ||
+      key === 'Escape' ||
+      code === 'Escape' ||
       key === 'Fn' ||
       key === 'FnLock' ||
       code === 'Fn' ||
-      code === 'FnLock' ||
-      key === 'Escape' ||
-      code === 'Escape'
+      code === 'FnLock'
     );
   };
 
@@ -346,13 +376,13 @@ export default function WordChatApp() {
         e.preventDefault();
         e.stopPropagation();
         setShowPasswordModal(false);
-        handlePanicClear();
+        handlePanicLock();
       }
     };
 
     window.addEventListener('keydown', handleGlobalPanic, true);
     return () => window.removeEventListener('keydown', handleGlobalPanic, true);
-  }, [handlePanicClear]);
+  }, [handlePanicLock]);
 
   // Connect to Server-Sent Events (SSE) for real-time updates
   useEffect(() => {
@@ -371,7 +401,11 @@ export default function WordChatApp() {
           const data = JSON.parse(event.data);
 
           if (data.type === 'init') {
-            setMessages((data.messages || []).slice(-4));
+            // Only update messages if server actually has messages
+            // Never overwrite existing local messages with an empty array upon server cold-start or reconnect!
+            if (Array.isArray(data.messages) && data.messages.length > 0) {
+              setMessages(data.messages.slice(-4));
+            }
             if (data.clientCount !== undefined) {
               const count = Math.min(2, Math.max(1, Number(data.clientCount) || 1));
               setParticipantCount(count);
@@ -379,6 +413,8 @@ export default function WordChatApp() {
           } else if (data.type === 'message') {
             // Append incoming message and keep ONLY latest 4
             setMessages((prev) => {
+              const exists = prev.some((m) => m.id === data.message.id);
+              if (exists) return prev;
               const updated = [...prev, data.message];
               return updated.slice(-4);
             });
@@ -406,6 +442,9 @@ export default function WordChatApp() {
             }
           } else if (data.type === 'clear') {
             setMessages([]);
+            if (typeof window !== 'undefined') {
+              sessionStorage.removeItem(`word_chat_msgs_${roomId}`);
+            }
           } else if (data.type === 'presence') {
             // Strictly clamp to at most 2 co-authors
             const count = Math.min(2, Math.max(1, Number(data.clientCount) || 1));
@@ -532,7 +571,7 @@ export default function WordChatApp() {
         participantCount={participantCount}
         onOpenSettings={() => setShowSettingsModal(true)}
         onLockToggle={handleLockToggle}
-        onPanic={handlePanicClear}
+        onPanic={handlePanicLock}
         darkMode={darkMode}
         toggleDarkMode={toggleDarkMode}
       />
@@ -542,7 +581,7 @@ export default function WordChatApp() {
         fontSettings={fontSettings}
         setFontSettings={setFontSettings}
         onOpenFileMenu={() => setShowSettingsModal(true)}
-        onPanicClear={handlePanicClear}
+        onPanicClear={handlePanicLock}
         darkMode={darkMode}
         toggleDarkMode={toggleDarkMode}
         isFontColorBlinking={isFontColorBlinking}
@@ -574,7 +613,7 @@ export default function WordChatApp() {
           stealthMode={stealthMode}
           onSendMessage={handleSendMessage}
           onRequireUnlock={() => setShowPasswordModal(true)}
-          onPanicClear={handlePanicClear}
+          onPanicClear={handlePanicLock}
           peerTyping={peerTyping}
           darkMode={darkMode}
         />
@@ -614,7 +653,7 @@ export default function WordChatApp() {
         setDocTitle={setDocTitle}
         stealthMode={stealthMode}
         setStealthMode={setStealthMode}
-        onPanicClear={handlePanicClear}
+        onPanicClear={handleRoomWipe}
         currentPassword={roomPassword}
         setCurrentPassword={setRoomPassword}
       />

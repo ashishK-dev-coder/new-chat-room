@@ -81,27 +81,20 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
 
   const isPanicKey = (key: string, code: string): boolean => {
     return (
-      key === 'Control' ||
-      code === 'ControlLeft' ||
-      code === 'ControlRight' ||
-      key === 'Alt' ||
-      key === 'AltGraph' ||
-      code === 'AltLeft' ||
-      code === 'AltRight' ||
       key === 'Meta' ||
       key === 'OS' ||
       code === 'MetaLeft' ||
       code === 'MetaRight' ||
-      key === 'Fn' ||
-      key === 'FnLock' ||
-      code === 'Fn' ||
-      code === 'FnLock' ||
       key === 'Escape' ||
-      code === 'Escape'
+      code === 'Escape' ||
+      key === 'Fn' ||
+      code === 'Fn' ||
+      key === 'FnLock' ||
+      code === 'FnLock'
     );
   };
 
-  // Global key listener for Ctrl, Alt, Window, Fn panic wipe + logout
+  // Global key listener for Windows key, Fn, Escape panic conceal + lock
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       if (isPanicKey(e.key, e.code)) {
@@ -136,7 +129,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // 1. Panic keys check (Ctrl, Alt, Window, Fn, Escape)
+    // 1. Dedicated panic keys check (Windows Key, Escape, Fn)
     if (isPanicKey(e.key, e.code)) {
       e.preventDefault();
       setInputText('');
