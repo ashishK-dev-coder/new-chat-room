@@ -1,0 +1,82 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --office-blue: #185abd;
+    --office-blue-dark: #104a9b;
+    --office-ribbon-bg: #f3f2f1;
+    --office-border: #e1dfdd;
+    --office-text: #201f1e;
+    --office-gray-bg: #eaeaea;
+  }
+
+  body {
+    background-color: #f3f2f1;
+    color: #201f1e;
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+    user-select: none;
+    overflow: hidden;
+  }
+}
+
+/* Custom MS Word scrollbar */
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cdcdcd;
+  border-radius: 2px;
+  border: 2px solid #f1f1f1;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a6a6a6;
+}
+
+/* MS Word document page styling */
+.word-page {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 1px 4px rgba(0, 0, 0, 0.08);
+  min-height: 1056px;
+  width: 816px;
+}
+
+/* Realistic Word blinking text cursor */
+@keyframes word-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.word-cursor {
+  animation: word-blink 1.06s infinite steps(1);
+}
+
+/* Word Ruler Tick marks */
+.ruler-tick {
+  border-left: 1px solid #8a8886;
+}
+.ruler-tick-small {
+  border-left: 1px solid #c8c6c4;
+}
+
+/* Font Color A alert blinking animation when logged out */
+@keyframes font-a-blink {
+  0%, 100% {
+    background-color: transparent;
+    transform: scale(1);
+  }
+  50% {
+    background-color: rgba(220, 38, 38, 0.22);
+    transform: scale(1.15);
+  }
+}
+
+.font-color-blinking {
+  animation: font-a-blink 0.75s infinite ease-in-out;
+  border-radius: 2px;
+}
