@@ -372,6 +372,10 @@ export default function WordChatApp() {
 
           if (data.type === 'init') {
             setMessages((data.messages || []).slice(-4));
+            if (data.clientCount !== undefined) {
+              const count = Math.min(2, Math.max(1, Number(data.clientCount) || 1));
+              setParticipantCount(count);
+            }
           } else if (data.type === 'message') {
             // Append incoming message and keep ONLY latest 4
             setMessages((prev) => {
@@ -379,20 +383,25 @@ export default function WordChatApp() {
               return updated.slice(-4);
             });
 
+            if (data.clientCount !== undefined) {
+              setParticipantCount(Math.min(2, Math.max(1, Number(data.clientCount) || 1)));
+            }
+
             const incomingSenderId = data.message?.senderId;
             const currentTabId = tabAuthorIdRef.current;
             // Check if the message arrived from the other author (not self)
             const isFromOtherAuthor = !incomingSenderId || incomingSenderId !== currentTabId;
 
             if (isFromOtherAuthor) {
+              // Message from peer confirms active 2-author presence
+              setParticipantCount(2);
+
               // 1. If currently logged out: activate discreet Font Color 'A' border alert
               if (!isUnlockedRef.current) {
                 setIsFontColorBlinking(true);
               }
 
               // 2. Play notification sound chime:
-              // Runs whenever a message arrives from the other author, ensuring
-              // audible alert whether the user is on another tab, minimized, or viewing document
               playNotificationSound();
             }
           } else if (data.type === 'clear') {

@@ -12,14 +12,12 @@ export interface ClientSubscriber {
   id: string;
   senderId: string;
   send: (data: string) => boolean;
-  lastSeen: number;
 }
 
 export interface RoomState {
   roomId: string;
   messages: ChatMessage[];
   clients: Map<string, ClientSubscriber>; // connectionId -> subscriber
-  activeAuthors: Map<string, number>; // senderId -> lastSeen timestamp
 }
 
 // Global variable across hot reloads in development
@@ -35,7 +33,6 @@ if (process.env.NODE_ENV !== 'production') {
 
 const MAX_MESSAGES = 4; // strictly maintain at most 4 messages
 const MAX_AUTHORS = 2; // strictly 2-person chat room
-const AUTHOR_INACTIVITY_TIMEOUT_MS = 35000; // 35 seconds inactivity timeout
 
 // Fetch the authorization password directly from Environment Variables
 export function getSystemPassword(): string {
@@ -54,47 +51,41 @@ export function getOrCreateRoom(roomId: string): RoomState {
       roomId,
       messages: [],
       clients: new Map(),
-      activeAuthors: new Map(),
     };
     rooms.set(roomId, room);
   }
   return room;
 }
 
-// Prune inactive authors and dead connections
-function pruneStale(room: RoomState): void {
-  const now = Date.now();
-
-  // 1. Prune authors with no heartbeat for > 35s
-  room.activeAuthors.forEach((lastSeen, authorId) => {
-    if (now - lastSeen > AUTHOR_INACTIVITY_TIMEOUT_MS) {
-      room.activeAuthors.delete(authorId);
+// Get set of unique active author IDs in the room based on currently open SSE connections
+export function getActiveAuthorIds(room: RoomState): Set<string> {
+  const ids = new Set<string>();
+  room.clients.forEach((sub) => {
+    if (sub.senderId) {
+      ids.add(sub.senderId);
     }
   });
-
-  // 2. Prune dead client connections
-  const deadIds: string[] = [];
-  room.clients.forEach((sub, id) => {
-    if (now - sub.lastSeen > AUTHOR_INACTIVITY_TIMEOUT_MS) {
-      deadIds.push(id);
-    }
-  });
-  deadIds.forEach((id) => room.clients.delete(id));
+  return ids;
 }
 
-// Check if an author is permitted to join / participate in this 2-person room
+// Get active author count (strictly clamped between 1 and 2)
+export function getActiveAuthorCount(room: RoomState): number {
+  const uniqueAuthors = getActiveAuthorIds(room);
+  return Math.min(MAX_AUTHORS, Math.max(1, uniqueAuthors.size));
+}
+
+// Check if an author is permitted to join / send messages in this 2-person room
 export function canAuthorParticipate(roomId: string, senderId: string): boolean {
   const room = getOrCreateRoom(roomId);
-  pruneStale(room);
+  const activeIds = getActiveAuthorIds(room);
 
   // If already an active author in room, allowed
-  if (room.activeAuthors.has(senderId)) {
+  if (activeIds.has(senderId)) {
     return true;
   }
 
-  // If room has less than 2 authors, allowed to take an open slot
-  if (room.activeAuthors.size < MAX_AUTHORS) {
-    room.activeAuthors.set(senderId, Date.now());
+  // If room has less than 2 distinct authors connected, allowed
+  if (activeIds.size < MAX_AUTHORS) {
     return true;
   }
 
@@ -102,76 +93,13 @@ export function canAuthorParticipate(roomId: string, senderId: string): boolean 
   return false;
 }
 
-// Touch author heartbeat
-export function touchAuthorPresence(roomId: string, senderId: string): void {
-  const room = rooms.get(roomId);
-  if (!room || !senderId) return;
-  room.activeAuthors.set(senderId, Date.now());
-}
-
-// Subscribe client to room SSE events with strict 2-person limit
-export function subscribeToRoom(
-  roomId: string,
-  senderId: string,
-  sendFn: (data: string) => boolean
-): { unsubscribe: () => void; allowed: boolean } {
-  const room = getOrCreateRoom(roomId);
-  pruneStale(room);
-
-  // Enforce 2-person room capacity
-  if (!room.activeAuthors.has(senderId) && room.activeAuthors.size >= MAX_AUTHORS) {
-    return {
-      allowed: false,
-      unsubscribe: () => {},
-    };
-  }
-
-  // Mark author as active
-  room.activeAuthors.set(senderId, Date.now());
-
-  const connId = `conn_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-  const subscriber: ClientSubscriber = {
-    id: connId,
-    senderId,
-    send: sendFn,
-    lastSeen: Date.now(),
-  };
-
-  room.clients.set(connId, subscriber);
-
-  // Broadcast presence count strictly clamped to 1 or 2
-  broadcastPresence(room);
-
-  return {
-    allowed: true,
-    unsubscribe: () => {
-      room.clients.delete(connId);
-
-      // Check if this author has any remaining active connections
-      let hasOtherConnections = false;
-      room.clients.forEach((sub) => {
-        if (sub.senderId === senderId) {
-          hasOtherConnections = true;
-        }
-      });
-
-      if (!hasOtherConnections) {
-        room.activeAuthors.delete(senderId);
-      }
-
-      broadcastPresence(room);
-    },
-  };
-}
-
-// Broadcast presence count (strictly capped at 2 for authentic Word co-authoring)
-function broadcastPresence(room: RoomState) {
-  pruneStale(room);
-  const clampedAuthorCount = Math.min(MAX_AUTHORS, Math.max(1, room.activeAuthors.size));
+// Broadcast presence count strictly to all connected clients
+export function broadcastPresence(room: RoomState) {
+  const clampedCount = getActiveAuthorCount(room);
 
   const payload = JSON.stringify({
     type: 'presence',
-    clientCount: clampedAuthorCount,
+    clientCount: clampedCount,
     timestamp: Date.now(),
   });
 
@@ -190,13 +118,51 @@ function broadcastPresence(room: RoomState) {
   deadIds.forEach((id) => room.clients.delete(id));
 }
 
+// Subscribe client to room SSE events with strict 2-person limit
+export function subscribeToRoom(
+  roomId: string,
+  senderId: string,
+  sendFn: (data: string) => boolean
+): { unsubscribe: () => void; allowed: boolean } {
+  const room = getOrCreateRoom(roomId);
+  const activeIds = getActiveAuthorIds(room);
+
+  // Enforce 2-person room capacity: if 2 distinct authors are already connected and this is a 3rd new author
+  if (!activeIds.has(senderId) && activeIds.size >= MAX_AUTHORS) {
+    return {
+      allowed: false,
+      unsubscribe: () => {},
+    };
+  }
+
+  const connId = `conn_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const subscriber: ClientSubscriber = {
+    id: connId,
+    senderId,
+    send: sendFn,
+  };
+
+  room.clients.set(connId, subscriber);
+
+  // Broadcast presence count to all connected clients (e.g. updates from 1 Author to 2 Authors)
+  broadcastPresence(room);
+
+  return {
+    allowed: true,
+    unsubscribe: () => {
+      room.clients.delete(connId);
+      // Immediately notify remaining client of updated count
+      broadcastPresence(room);
+    },
+  };
+}
+
 // Add message with strict 4-message ceiling and 2-person room enforcement
 export function addMessageToRoom(
   roomId: string,
   message: { senderId: string; senderName: string; text: string }
 ): { success: boolean; messages: ChatMessage[]; error?: string } {
   const room = getOrCreateRoom(roomId);
-  pruneStale(room);
 
   // Enforce 2-person limit
   if (!canAuthorParticipate(roomId, message.senderId)) {
@@ -206,8 +172,6 @@ export function addMessageToRoom(
       error: 'Room full: Only 2 persons are permitted in this chat room.',
     };
   }
-
-  room.activeAuthors.set(message.senderId, Date.now());
 
   const newMsg: ChatMessage = {
     id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
@@ -224,11 +188,14 @@ export function addMessageToRoom(
     room.messages = room.messages.slice(-MAX_MESSAGES);
   }
 
-  // Broadcast to all connected clients
+  const authorCount = getActiveAuthorCount(room);
+
+  // Broadcast to all connected clients including current participant count
   const payload = JSON.stringify({
     type: 'message',
     message: newMsg,
     messages: room.messages,
+    clientCount: authorCount,
   });
 
   const deadIds: string[] = [];

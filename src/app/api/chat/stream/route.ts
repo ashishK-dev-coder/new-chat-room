@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { getOrCreateRoom, getRoomMessages, subscribeToRoom, touchAuthorPresence } from '@/lib/chatStore';
+import { getOrCreateRoom, getRoomMessages, subscribeToRoom, getActiveAuthorCount } from '@/lib/chatStore';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -7,7 +7,7 @@ export async function GET(req: NextRequest) {
   const senderId = searchParams.get('senderId') || `author_${Date.now()}`;
 
   // Ensure room exists
-  getOrCreateRoom(roomId);
+  const room = getOrCreateRoom(roomId);
 
   const encoder = new TextEncoder();
   let cleanup: (() => void) | null = null;
@@ -51,19 +51,24 @@ export async function GET(req: NextRequest) {
 
       cleanup = subResult.unsubscribe;
 
-      // 3. Immediately send current messages (max 4)
+      // 3. Immediately send current messages (max 4) AND current author count
       const currentMessages = getRoomMessages(roomId);
+      const currentCount = getActiveAuthorCount(room);
+
       const initPayload = JSON.stringify({
         type: 'init',
         messages: currentMessages,
+        clientCount: currentCount,
       });
       sendChunk(`data: ${initPayload}\n\n`);
 
       // 4. Keep-alive heartbeat every 15 seconds to prevent browser & Vercel timeout
+      // and periodically refresh presence count
       keepAliveTimer = setInterval(() => {
         try {
           controller.enqueue(encoder.encode(`: ping\n\n`));
-          touchAuthorPresence(roomId, senderId);
+          const count = getActiveAuthorCount(room);
+          sendChunk(`data: ${JSON.stringify({ type: 'presence', clientCount: count })}\n\n`);
         } catch {
           if (keepAliveTimer) {
             clearInterval(keepAliveTimer);
