@@ -69,10 +69,23 @@ export default function WordChatApp() {
   useEffect(() => {
     const primeAudio = () => {
       try {
+        // 1. Prime HTML5 Audio element with an instant silent playback
         if (audioElRef.current) {
-          audioElRef.current.load();
+          const el = audioElRef.current;
+          el.volume = 0.01;
+          const p = el.play();
+          if (p !== undefined) {
+            p.then(() => {
+              el.pause();
+              el.currentTime = 0;
+              el.volume = 0.95;
+            }).catch(() => {
+              el.volume = 0.95;
+            });
+          }
         }
 
+        // 2. Prime Web Audio Context with silent buffer
         const AudioCtx =
           window.AudioContext ||
           (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -80,8 +93,18 @@ export default function WordChatApp() {
           if (!audioCtxRef.current || audioCtxRef.current.state === 'closed') {
             audioCtxRef.current = new AudioCtx();
           }
-          if (audioCtxRef.current.state === 'suspended') {
-            audioCtxRef.current.resume().catch(() => {});
+          const ctx = audioCtxRef.current;
+          if (ctx.state === 'suspended') {
+            ctx.resume().catch(() => {});
+          }
+          try {
+            const buffer = ctx.createBuffer(1, 1, 22050);
+            const source = ctx.createBufferSource();
+            source.buffer = buffer;
+            source.connect(ctx.destination);
+            source.start(0);
+          } catch {
+            // ignore
           }
         }
       } catch {
@@ -89,15 +112,27 @@ export default function WordChatApp() {
       }
     };
 
-    window.addEventListener('click', primeAudio, { passive: true });
-    window.addEventListener('keydown', primeAudio, { passive: true });
+    const primeEvents = ['click', 'keydown', 'pointerdown', 'mousedown', 'touchstart', 'focus'];
+    primeEvents.forEach((evt) => {
+      window.addEventListener(evt, primeAudio, { capture: true, passive: true });
+    });
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible' && audioCtxRef.current?.state === 'suspended') {
+        audioCtxRef.current.resume().catch(() => {});
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
     return () => {
-      window.removeEventListener('click', primeAudio);
-      window.removeEventListener('keydown', primeAudio);
+      primeEvents.forEach((evt) => {
+        window.removeEventListener(evt, primeAudio, { capture: true });
+      });
+      document.removeEventListener('visibilitychange', handleVisibility);
     };
   }, []);
 
-  // Web Audio chime synthesizer (guaranteed fallback)
+  // Web Audio chime synthesizer (resilient to background tab suspension & timer throttling)
   const playWebAudioChime = useCallback(() => {
     try {
       const AudioCtx =
@@ -105,54 +140,71 @@ export default function WordChatApp() {
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (!AudioCtx) return;
 
-      let ctx = audioCtxRef.current;
-      if (!ctx || ctx.state === 'closed') {
-        ctx = new AudioCtx();
-        audioCtxRef.current = ctx;
+      if (!audioCtxRef.current || audioCtxRef.current.state === 'closed') {
+        audioCtxRef.current = new AudioCtx();
       }
+
+      const ctx = audioCtxRef.current;
+
+      const triggerOscillator = () => {
+        try {
+          const now = ctx.currentTime;
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+
+          // Two-tone chime: E5 (659.25Hz) to A5 (880Hz)
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(659.25, now);
+          osc.frequency.exponentialRampToValueAtTime(880, now + 0.12);
+
+          gain.gain.setValueAtTime(0.7, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+
+          osc.start(now);
+          osc.stop(now + 0.47);
+        } catch {
+          // ignore
+        }
+      };
 
       if (ctx.state === 'suspended') {
-        ctx.resume().catch(() => {});
+        ctx
+          .resume()
+          .then(() => {
+            triggerOscillator();
+          })
+          .catch(() => {
+            triggerOscillator();
+          });
+      } else {
+        triggerOscillator();
       }
-
-      const now = ctx.currentTime;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-
-      // Triangle wave has clear, audible presence
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(659.25, now); // E5
-      osc.frequency.exponentialRampToValueAtTime(880, now + 0.1); // A5
-
-      gain.gain.setValueAtTime(0.5, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
-
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-
-      osc.start(now);
-      osc.stop(now + 0.42);
     } catch {
       // ignore
     }
   }, []);
 
-  // Dual-engine notification sound player (HTML5 Audio + Web Audio fallback)
+  // Dual-engine notification sound player (Works reliably in active or background tabs)
   const playNotificationSound = useCallback(() => {
-    let playedHtml5 = false;
+    let html5Succeeded = false;
 
     // 1. Try DOM preloaded audio element
     if (audioElRef.current) {
       try {
-        audioElRef.current.currentTime = 0;
-        audioElRef.current.volume = 0.9;
-        const playPromise = audioElRef.current.play();
+        const el = audioElRef.current;
+        el.currentTime = 0;
+        el.volume = 0.95;
+        const playPromise = el.play();
         if (playPromise !== undefined) {
           playPromise
             .then(() => {
-              playedHtml5 = true;
+              html5Succeeded = true;
             })
             .catch(() => {
+              // DOM audio blocked or rejected in background tab; fallback directly to Web Audio chime
               playWebAudioChime();
             });
         }
@@ -161,12 +213,20 @@ export default function WordChatApp() {
       }
     }
 
-    // 2. Also run Web Audio chime to ensure crisp, unmistakable notification sound
-    setTimeout(() => {
-      if (!playedHtml5) {
-        playWebAudioChime();
-      }
-    }, 50);
+    // 2. If the user is currently on another tab or window is unfocused:
+    // Fire Web Audio chime immediately without setTimeout delays (which browsers throttle in inactive tabs)
+    const isBackgroundTab =
+      typeof document !== 'undefined' && (document.hidden || !document.hasFocus());
+
+    if (isBackgroundTab) {
+      playWebAudioChime();
+    } else {
+      setTimeout(() => {
+        if (!html5Succeeded) {
+          playWebAudioChime();
+        }
+      }, 50);
+    }
   }, [playWebAudioChime]);
 
   // Read URL query parameters for room
@@ -310,9 +370,20 @@ export default function WordChatApp() {
               return updated.slice(-4);
             });
 
-            // When this tab is logged out: EVERY incoming message triggers blinking 'A' and sound!
-            if (!isUnlockedRef.current) {
-              setIsFontColorBlinking(true);
+            const incomingSenderId = data.message?.senderId;
+            const currentTabId = tabAuthorIdRef.current;
+            // Check if the message arrived from the other author (not self)
+            const isFromOtherAuthor = !incomingSenderId || incomingSenderId !== currentTabId;
+
+            if (isFromOtherAuthor) {
+              // 1. If currently logged out: activate discreet Font Color 'A' border alert
+              if (!isUnlockedRef.current) {
+                setIsFontColorBlinking(true);
+              }
+
+              // 2. Play notification sound chime:
+              // Runs whenever a message arrives from the other author, ensuring
+              // audible alert whether the user is on another tab, minimized, or viewing document
               playNotificationSound();
             }
           } else if (data.type === 'clear') {
@@ -428,6 +499,7 @@ export default function WordChatApp() {
         ref={audioElRef}
         src="/sounds/chime.wav"
         preload="auto"
+        playsInline
         className="hidden"
       />
 
