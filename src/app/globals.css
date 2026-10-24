@@ -42,8 +42,17 @@
 /* MS Word document page styling */
 .word-page {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 1px 4px rgba(0, 0, 0, 0.08);
-  min-height: 1056px;
-  width: 816px;
+  width: 100%;
+  max-width: 816px;
+  box-sizing: border-box;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+@media (min-width: 640px) {
+  .word-page {
+    min-height: 1056px;
+  }
 }
 
 /* Realistic Word blinking text cursor */

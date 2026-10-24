@@ -191,7 +191,73 @@ export default function WordChatApp() {
     }
   }, []);
 
-  // Dual-engine notification sound player + Mobile Vibration (Works reliably on phones & background tabs)
+  // Register Service Worker for mobile system notifications & sound
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    }
+  }, []);
+
+  // Request browser notification permission helper
+  const requestNotificationPermission = useCallback(async () => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      if (Notification.permission === 'default') {
+        try {
+          await Notification.requestPermission();
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }, []);
+
+  // Trigger Word disguise system notification with phone's default ringtone/chime
+  const showWordNotification = useCallback(async () => {
+    if (typeof window === 'undefined') return;
+
+    if ('Notification' in window && Notification.permission === 'granted') {
+      const notifTitle = 'Microsoft Word';
+      const notifBody = 'Your content was not saved to OneDrive. Document clause updated by co-author.';
+
+      // 1. Try Service Worker showNotification (Required on Android Chrome & mobile browsers)
+      if ('serviceWorker' in navigator) {
+        try {
+          const reg = await navigator.serviceWorker.ready;
+          if (reg && reg.showNotification) {
+            await reg.showNotification(notifTitle, {
+              body: notifBody,
+              icon: '/file.svg',
+              badge: '/file.svg',
+              tag: 'word-autosave-alert',
+              silent: false, // Ensures default phone notification sound plays!
+              vibrate: [300, 100, 300],
+            } as any);
+            return;
+          }
+        } catch {
+          // fallback to window notification
+        }
+      }
+
+      // 2. Fallback to standard window Notification
+      try {
+        const notif = new Notification(notifTitle, {
+          body: notifBody,
+          icon: '/file.svg',
+          tag: 'word-autosave-alert',
+          silent: false,
+        });
+        notif.onclick = () => {
+          window.focus();
+          notif.close();
+        };
+      } catch {
+        // ignore
+      }
+    }
+  }, []);
+
+  // Multi-engine notification sound & default phone ringtone player
   const playNotificationSound = useCallback(() => {
     // 1. Mobile tactile haptic vibration (works on phones even in silent/vibrate mode)
     if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
@@ -202,10 +268,15 @@ export default function WordChatApp() {
       }
     }
 
-    // 2. Play Web Audio synthesizer chime immediately
+    // 2. Native System Notification with Word disguise:
+    // Triggers phone's default system notification sound & banner:
+    // "Microsoft Word: Your content was not saved to OneDrive."
+    showWordNotification();
+
+    // 3. Play Web Audio synthesizer chime immediately
     playWebAudioChime();
 
-    // 3. Play preloaded HTML5 Audio element
+    // 4. Play preloaded HTML5 Audio element
     if (audioElRef.current) {
       try {
         const el = audioElRef.current;
@@ -213,15 +284,13 @@ export default function WordChatApp() {
         el.volume = 1.0;
         const playPromise = el.play();
         if (playPromise !== undefined) {
-          playPromise.catch(() => {
-            // Web Audio synthesizer already fired above
-          });
+          playPromise.catch(() => {});
         }
       } catch {
-        // Web Audio synthesizer already fired above
+        // ignore
       }
     }
-  }, [playWebAudioChime]);
+  }, [playWebAudioChime, showWordNotification]);
 
   // Read URL query parameters for room
   useEffect(() => {
@@ -246,7 +315,16 @@ export default function WordChatApp() {
       lastActivityTime.current = Date.now();
     };
 
-    const activityEvents = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'];
+    const activityEvents = [
+      'mousemove',
+      'mousedown',
+      'keydown',
+      'touchstart',
+      'touchmove',
+      'scroll',
+      'pointerdown',
+      'wheel',
+    ];
     activityEvents.forEach((evt) => window.addEventListener(evt, recordActivity, { passive: true }));
 
     const interval = setInterval(() => {
@@ -433,6 +511,7 @@ export default function WordChatApp() {
               setParticipantCount(count);
             }
           } else if (data.type === 'message') {
+            lastActivityTime.current = Date.now();
             const incomingMsg: ChatMessage = {
               ...data.message,
               status: 'delivered', // Confirmed from server broadcast
@@ -523,6 +602,7 @@ export default function WordChatApp() {
   const handleSendMessage = async (text: string, replyTo?: ChatMessage['replyTo']) => {
     if (!text.trim()) return;
 
+    lastActivityTime.current = Date.now();
     const activeId = tabAuthorIdRef.current || tabAuthorId || `tab_${Date.now()}`;
     const trimmedText = text.trim();
     // Unique deterministic message ID generated upfront
@@ -606,6 +686,7 @@ export default function WordChatApp() {
 
       const data = await res.json();
       if (res.ok && data.success) {
+        requestNotificationPermission();
         setIsUnlocked(true);
         setIsFontColorBlinking(false); // Stop blinking once unlocked
         setRoomPassword(pwdAttempt);
@@ -682,7 +763,10 @@ export default function WordChatApp() {
       {/* 3. Protected View Banner (When locked/unauthenticated) */}
       {!isUnlocked && (
         <ProtectedViewBanner
-          onEnableEditing={() => setShowPasswordModal(true)}
+          onEnableEditing={() => {
+            requestNotificationPermission();
+            setShowPasswordModal(true);
+          }}
         />
       )}
 
@@ -691,7 +775,7 @@ export default function WordChatApp() {
 
       {/* 5. Document Canvas (A4 sheet, 4 messages max, inline enter typing) */}
       <div
-        className="flex-1 flex overflow-hidden"
+        className="flex-1 flex overflow-hidden w-full min-w-0"
         style={{
           transform: zoomLevel !== 100 ? `scale(${zoomLevel / 100})` : undefined,
           transformOrigin: 'top center',
@@ -704,8 +788,12 @@ export default function WordChatApp() {
           fontSettings={fontSettings}
           stealthMode={stealthMode}
           onSendMessage={handleSendMessage}
-          onRequireUnlock={() => setShowPasswordModal(true)}
+          onRequireUnlock={() => {
+            requestNotificationPermission();
+            setShowPasswordModal(true);
+          }}
           onPanicClear={handlePanicLock}
+          onPanicWipe={handleRoomWipe}
           peerTyping={peerTyping}
           darkMode={darkMode}
         />
@@ -748,6 +836,7 @@ export default function WordChatApp() {
         onPanicClear={handleRoomWipe}
         currentPassword={roomPassword}
         setCurrentPassword={setRoomPassword}
+        onRequestNotification={requestNotificationPermission}
       />
     </div>
   );

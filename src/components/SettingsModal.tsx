@@ -11,6 +11,7 @@ import {
   FileText,
   KeyRound,
   Trash2,
+  Bell,
 } from 'lucide-react';
 
 interface SettingsModalProps {
@@ -25,6 +26,7 @@ interface SettingsModalProps {
   onPanicClear: () => void;
   currentPassword: string;
   setCurrentPassword: (pw: string) => void;
+  onRequestNotification?: () => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -39,6 +41,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onPanicClear,
   currentPassword,
   setCurrentPassword,
+  onRequestNotification,
 }) => {
   const [copied, setCopied] = useState(false);
   const [tempRoom, setTempRoom] = useState(roomId);
@@ -63,6 +66,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     onClose();
   };
 
+  const isNotifGranted =
+    typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted';
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-[1px] p-4 animate-in fade-in select-none text-xs">
       <div className="w-full max-w-lg bg-white rounded-md shadow-2xl border border-[#c8c6c4] overflow-hidden text-[#201f1e]">
@@ -81,7 +87,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         {/* Content body */}
-        <div className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
+        <div className="p-4 sm:p-5 space-y-4 max-h-[80vh] overflow-y-auto">
           {/* Quick Share Link */}
           <div className="bg-[#f3f2f1] p-3 rounded border border-[#e1dfdd] space-y-2">
             <div className="flex items-center justify-between">
@@ -99,6 +105,33 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
             <p className="text-[11px] text-[#605e5c]">
               Share this link with your 2nd person. Both participants will see the Word document and sync real-time live typing.
+            </p>
+          </div>
+
+          {/* Mobile Default Sound & System Notification Disguise */}
+          <div className="bg-[#f0f9ff] p-3 rounded border border-[#bae6fd] space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-xs text-[#0369a1] flex items-center">
+                <Bell className="w-3.5 h-3.5 mr-1.5 text-[#0284c7]" />
+                OneDrive Revision Alerts (Mobile Default Sound)
+              </span>
+              {isNotifGranted ? (
+                <span className="text-emerald-700 font-semibold text-[11px] flex items-center bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                  <Check className="w-3 h-3 mr-1 text-emerald-600" />
+                  Enabled
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onRequestNotification}
+                  className="px-2.5 py-1 bg-[#0284c7] hover:bg-[#0369a1] text-white rounded text-[11px] font-medium transition cursor-pointer shadow-xs"
+                >
+                  Turn On
+                </button>
+              )}
+            </div>
+            <p className="text-[11px] text-[#0c4a6e] leading-relaxed">
+              Triggers your phone&apos;s native notification ringtone &amp; vibration when a clause arrives. Disguised as: <em>&ldquo;Microsoft Word: Your content was not saved to OneDrive.&rdquo;</em>
             </p>
           </div>
 
