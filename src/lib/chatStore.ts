@@ -24,6 +24,7 @@ export interface RoomState {
   roomId: string;
   messages: ChatMessage[];
   clients: Map<string, ClientSubscriber>; // connectionId -> subscriber
+  authorHeartbeats: Map<string, number>; // senderId -> lastTimestamp
 }
 
 // Global variable across hot reloads in development
@@ -39,6 +40,7 @@ if (process.env.NODE_ENV !== 'production') {
 
 const MAX_MESSAGES = 4; // strictly maintain at most 4 messages
 const MAX_AUTHORS = 2; // strictly 2-person chat room
+const HEARTBEAT_TIMEOUT_MS = 6000; // 6 seconds threshold for dead author detection
 
 // Fetch the authorization password directly from Environment Variables
 export function getSystemPassword(): string {
@@ -57,20 +59,66 @@ export function getOrCreateRoom(roomId: string): RoomState {
       roomId,
       messages: [],
       clients: new Map(),
+      authorHeartbeats: new Map(),
     };
     rooms.set(roomId, room);
+  }
+  if (!room.authorHeartbeats) {
+    room.authorHeartbeats = new Map();
   }
   return room;
 }
 
-// Get set of unique active author IDs in the room based on currently open SSE connections
+// Record an author heartbeat timestamp and prune expired sessions
+export function recordAuthorHeartbeat(roomId: string, senderId: string): number {
+  const room = getOrCreateRoom(roomId);
+  room.authorHeartbeats.set(senderId, Date.now());
+  const count = getActiveAuthorCount(room);
+  return count;
+}
+
+// Explicitly and instantly remove an author who closed the tab or left the page
+export function removeAuthorFromRoom(roomId: string, senderId: string): void {
+  const room = getOrCreateRoom(roomId);
+
+  // 1. Remove from heartbeats
+  if (room.authorHeartbeats) {
+    room.authorHeartbeats.delete(senderId);
+  }
+
+  // 2. Remove all SSE client connections associated with this author
+  const connIdsToRemove: string[] = [];
+  room.clients.forEach((sub, id) => {
+    if (sub.senderId === senderId) {
+      connIdsToRemove.push(id);
+    }
+  });
+  connIdsToRemove.forEach((id) => room.clients.delete(id));
+
+  // 3. Immediately broadcast updated presence (drops to 1 Author in < 50ms)
+  broadcastPresence(room);
+}
+
+// Get set of unique active author IDs in the room based on currently open SSE connections & live heartbeats
 export function getActiveAuthorIds(room: RoomState): Set<string> {
+  const now = Date.now();
   const ids = new Set<string>();
-  room.clients.forEach((sub) => {
-    if (sub.senderId) {
+  const deadConnIds: string[] = [];
+
+  room.clients.forEach((sub, connId) => {
+    const lastBeat = room.authorHeartbeats?.get(sub.senderId) ?? now;
+    // If no heartbeat within 6 seconds, consider connection dead
+    if (now - lastBeat > HEARTBEAT_TIMEOUT_MS) {
+      deadConnIds.push(connId);
+    } else if (sub.senderId) {
       ids.add(sub.senderId);
     }
   });
+
+  deadConnIds.forEach((id) => {
+    room.clients.delete(id);
+  });
+
   return ids;
 }
 
@@ -149,6 +197,7 @@ export function subscribeToRoom(
   };
 
   room.clients.set(connId, subscriber);
+  room.authorHeartbeats.set(senderId, Date.now());
 
   // Broadcast presence count to all connected clients (e.g. updates from 1 Author to 2 Authors)
   broadcastPresence(room);
@@ -157,6 +206,14 @@ export function subscribeToRoom(
     allowed: true,
     unsubscribe: () => {
       room.clients.delete(connId);
+      // If this author has no other tabs open in this room, remove their heartbeat immediately
+      let hasOtherConn = false;
+      room.clients.forEach((sub) => {
+        if (sub.senderId === senderId) hasOtherConn = true;
+      });
+      if (!hasOtherConn && room.authorHeartbeats) {
+        room.authorHeartbeats.delete(senderId);
+      }
       // Immediately notify remaining client of updated count
       broadcastPresence(room);
     },

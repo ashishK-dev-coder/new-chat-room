@@ -62,13 +62,17 @@ export async function GET(req: NextRequest) {
       });
       sendChunk(`data: ${initPayload}\n\n`);
 
-      // 4. Keep-alive heartbeat every 15 seconds to prevent browser & Vercel timeout
-      // and periodically refresh presence count
+      // 4. Fast keep-alive heartbeat every 3 seconds to immediately detect cut/leave connections
+      // and rapidly push presence count updates
+      let lastReportedCount = currentCount;
       keepAliveTimer = setInterval(() => {
         try {
           controller.enqueue(encoder.encode(`: ping\n\n`));
           const count = getActiveAuthorCount(room);
-          sendChunk(`data: ${JSON.stringify({ type: 'presence', clientCount: count })}\n\n`);
+          if (count !== lastReportedCount) {
+            lastReportedCount = count;
+            sendChunk(`data: ${JSON.stringify({ type: 'presence', clientCount: count })}\n\n`);
+          }
         } catch {
           if (keepAliveTimer) {
             clearInterval(keepAliveTimer);
@@ -79,7 +83,21 @@ export async function GET(req: NextRequest) {
             cleanup = null;
           }
         }
-      }, 15000);
+      }, 3000);
+
+      // 5. Instantly clean up on browser tab close / page navigation abort
+      if (req.signal) {
+        req.signal.addEventListener('abort', () => {
+          if (keepAliveTimer) {
+            clearInterval(keepAliveTimer);
+            keepAliveTimer = null;
+          }
+          if (cleanup) {
+            cleanup();
+            cleanup = null;
+          }
+        });
+      }
     },
     cancel() {
       if (keepAliveTimer) {

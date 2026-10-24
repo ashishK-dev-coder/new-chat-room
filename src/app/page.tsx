@@ -618,6 +618,66 @@ export default function WordChatApp() {
     };
   }, [roomId, tabAuthorId, playNotificationSound]);
 
+  // Instantly notify server when author leaves or closes the tab/page ("cuts the page")
+  useEffect(() => {
+    const sendLeaveBeacon = () => {
+      const activeId = tabAuthorIdRef.current || tabAuthorId;
+      if (!activeId || !roomId) return;
+      const payload = JSON.stringify({ roomId, senderId: activeId });
+      try {
+        if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+          navigator.sendBeacon('/api/chat/leave', new Blob([payload], { type: 'application/json' }));
+        } else {
+          fetch('/api/chat/leave', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: payload,
+            keepalive: true,
+          }).catch(() => {});
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    window.addEventListener('pagehide', sendLeaveBeacon);
+    window.addEventListener('beforeunload', sendLeaveBeacon);
+
+    return () => {
+      window.removeEventListener('pagehide', sendLeaveBeacon);
+      window.removeEventListener('beforeunload', sendLeaveBeacon);
+      sendLeaveBeacon();
+    };
+  }, [roomId, tabAuthorId]);
+
+  // Active author presence heartbeat (runs every 2.5s) to guarantee early detection within seconds
+  useEffect(() => {
+    if (!tabAuthorId) return;
+
+    const interval = setInterval(async () => {
+      const activeId = tabAuthorIdRef.current || tabAuthorId;
+      if (!activeId || !roomId) return;
+
+      try {
+        const res = await fetch('/api/chat/heartbeat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ roomId, senderId: activeId }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.clientCount !== undefined) {
+            setParticipantCount(Math.min(2, Math.max(1, Number(data.clientCount) || 1)));
+          }
+        }
+      } catch {
+        // ignore offline ping
+      }
+    }, 2500);
+
+    return () => clearInterval(interval);
+  }, [roomId, tabAuthorId]);
+
   // Send message handler with 0ms instant optimistic update + acknowledgment tracking
   const handleSendMessage = async (text: string, replyTo?: ChatMessage['replyTo']) => {
     if (!text.trim()) return;
