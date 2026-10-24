@@ -89,7 +89,7 @@ export const WordRibbon: React.FC<WordRibbonProps> = ({
     >
       {/* Ribbon Tabs Header */}
       <div
-        className={`flex items-center space-x-0.5 px-3 pt-1 border-b transition-colors ${
+        className={`flex items-center space-x-0.5 px-2 sm:px-3 pt-1 border-b transition-colors overflow-x-auto scrollbar-none ${
           darkMode ? 'bg-[#181818] border-[#333333]' : 'bg-[#fbfbfb] border-[#e1dfdd]'
         }`}
       >
@@ -99,7 +99,7 @@ export const WordRibbon: React.FC<WordRibbonProps> = ({
               <button
                 key={tab.id}
                 onClick={onOpenFileMenu}
-                className="bg-[#185abd] hover:bg-[#104a9b] text-white px-3 py-1 font-semibold rounded-t-sm transition-colors text-xs mr-1 cursor-pointer"
+                className="bg-[#185abd] hover:bg-[#104a9b] text-white px-2.5 sm:px-3 py-1 font-semibold rounded-t-sm transition-colors text-xs mr-1 cursor-pointer shrink-0"
               >
                 {tab.label}
               </button>
@@ -111,7 +111,7 @@ export const WordRibbon: React.FC<WordRibbonProps> = ({
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
-              className={`px-3 py-1 text-xs rounded-t-sm font-medium transition-colors cursor-pointer relative ${
+              className={`px-2.5 sm:px-3 py-1 text-xs rounded-t-sm font-medium transition-colors cursor-pointer relative shrink-0 ${
                 isActive
                   ? darkMode
                     ? 'text-[#4ba3f4] bg-[#202020] font-semibold border-t-2 border-[#4ba3f4]'
@@ -127,11 +127,11 @@ export const WordRibbon: React.FC<WordRibbonProps> = ({
         })}
 
         {/* Quick Dark Mode toggle tab button on right */}
-        <div className="flex-1 flex justify-end pr-2 pb-0.5">
+        <div className="flex-1 flex justify-end pr-1 sm:pr-2 pb-0.5 shrink-0">
           <button
             onClick={toggleDarkMode}
             title={darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-            className={`flex items-center space-x-1 px-2 py-0.5 rounded text-[11px] transition-colors cursor-pointer ${
+            className={`flex items-center space-x-1 px-2 py-0.5 rounded text-[11px] transition-colors cursor-pointer shrink-0 ${
               darkMode
                 ? 'bg-[#333333] hover:bg-[#444444] text-amber-300'
                 : 'bg-white hover:bg-[#eae8e6] border border-[#c8c6c4] text-[#323130]'
@@ -147,7 +147,7 @@ export const WordRibbon: React.FC<WordRibbonProps> = ({
 
       {/* Ribbon Tools Container */}
       <div
-        className={`h-[88px] px-3 py-1.5 flex items-stretch space-x-3 overflow-x-auto transition-colors ${
+        className={`h-[74px] sm:h-[88px] px-2 sm:px-3 py-1 sm:py-1.5 flex items-stretch space-x-2 sm:space-x-3 overflow-x-auto transition-colors ${
           darkMode ? 'bg-[#202020]' : 'bg-[#f3f2f1]'
         }`}
       >

@@ -110,7 +110,7 @@ export const PasswordModal: React.FC<PasswordModalProps> = ({
                 }}
                 disabled={isLoading}
                 placeholder="Enter password..."
-                className="w-full h-8 px-2.5 pr-8 bg-white border border-[#8a8886] rounded text-xs text-[#201f1e] focus:outline-none focus:border-[#185abd] focus:ring-1 focus:ring-[#185abd] transition-all"
+                className="w-full h-8 px-2.5 pr-8 bg-white border border-[#8a8886] rounded text-[16px] sm:text-xs text-[#201f1e] focus:outline-none focus:border-[#185abd] focus:ring-1 focus:ring-[#185abd] transition-all"
               />
               <button
                 type="button"

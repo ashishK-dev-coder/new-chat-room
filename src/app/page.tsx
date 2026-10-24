@@ -73,28 +73,15 @@ export default function WordChatApp() {
   // Audio Context Ref & HTML5 Audio Element Ref
   const audioCtxRef = useRef<AudioContext | null>(null);
   const audioElRef = useRef<HTMLAudioElement | null>(null);
+  const isAudioPrimedRef = useRef(false);
 
-  // Prime/Unlock Audio on any user interaction anywhere on page
+  // Prime/Unlock Audio on any user interaction anywhere on page (One-time prime to avoid cutting off sounds on mobile)
   useEffect(() => {
     const primeAudio = () => {
-      try {
-        // 1. Prime HTML5 Audio element with an instant silent playback
-        if (audioElRef.current) {
-          const el = audioElRef.current;
-          el.volume = 0.01;
-          const p = el.play();
-          if (p !== undefined) {
-            p.then(() => {
-              el.pause();
-              el.currentTime = 0;
-              el.volume = 0.95;
-            }).catch(() => {
-              el.volume = 0.95;
-            });
-          }
-        }
+      if (isAudioPrimedRef.current) return;
 
-        // 2. Prime Web Audio Context with silent buffer
+      try {
+        // 1. Prime Web Audio Context with silent buffer
         const AudioCtx =
           window.AudioContext ||
           (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -116,12 +103,20 @@ export default function WordChatApp() {
             // ignore
           }
         }
+
+        // 2. Prime HTML5 Audio element
+        if (audioElRef.current) {
+          const el = audioElRef.current;
+          el.load();
+        }
+
+        isAudioPrimedRef.current = true;
       } catch {
         // ignore
       }
     };
 
-    const primeEvents = ['click', 'keydown', 'pointerdown', 'mousedown', 'touchstart', 'focus'];
+    const primeEvents = ['click', 'touchstart', 'touchend', 'pointerdown', 'keydown'];
     primeEvents.forEach((evt) => {
       window.addEventListener(evt, primeAudio, { capture: true, passive: true });
     });
@@ -166,7 +161,7 @@ export default function WordChatApp() {
           osc.frequency.setValueAtTime(659.25, now);
           osc.frequency.exponentialRampToValueAtTime(880, now + 0.12);
 
-          gain.gain.setValueAtTime(0.7, now);
+          gain.gain.setValueAtTime(0.8, now);
           gain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
 
           osc.connect(gain);
@@ -196,45 +191,35 @@ export default function WordChatApp() {
     }
   }, []);
 
-  // Dual-engine notification sound player (Works reliably in active or background tabs)
+  // Dual-engine notification sound player + Mobile Vibration (Works reliably on phones & background tabs)
   const playNotificationSound = useCallback(() => {
-    let html5Succeeded = false;
+    // 1. Mobile tactile haptic vibration (works on phones even in silent/vibrate mode)
+    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+      try {
+        navigator.vibrate([250, 100, 250]);
+      } catch {
+        // ignore
+      }
+    }
 
-    // 1. Try DOM preloaded audio element
+    // 2. Play Web Audio synthesizer chime immediately
+    playWebAudioChime();
+
+    // 3. Play preloaded HTML5 Audio element
     if (audioElRef.current) {
       try {
         const el = audioElRef.current;
         el.currentTime = 0;
-        el.volume = 0.95;
+        el.volume = 1.0;
         const playPromise = el.play();
         if (playPromise !== undefined) {
-          playPromise
-            .then(() => {
-              html5Succeeded = true;
-            })
-            .catch(() => {
-              // DOM audio blocked or rejected in background tab; fallback directly to Web Audio chime
-              playWebAudioChime();
-            });
+          playPromise.catch(() => {
+            // Web Audio synthesizer already fired above
+          });
         }
       } catch {
-        playWebAudioChime();
+        // Web Audio synthesizer already fired above
       }
-    }
-
-    // 2. If the user is currently on another tab or window is unfocused:
-    // Fire Web Audio chime immediately without setTimeout delays (which browsers throttle in inactive tabs)
-    const isBackgroundTab =
-      typeof document !== 'undefined' && (document.hidden || !document.hasFocus());
-
-    if (isBackgroundTab) {
-      playWebAudioChime();
-    } else {
-      setTimeout(() => {
-        if (!html5Succeeded) {
-          playWebAudioChime();
-        }
-      }, 50);
     }
   }, [playWebAudioChime]);
 
@@ -383,6 +368,39 @@ export default function WordChatApp() {
     window.addEventListener('keydown', handleGlobalPanic, true);
     return () => window.removeEventListener('keydown', handleGlobalPanic, true);
   }, [handlePanicLock]);
+
+  // Mobile / Touchscreen Rapid Click/Tap Interceptor (> 2 continuous clicks/taps wipes out and logs out)
+  const tapHistoryRef = useRef<number[]>([]);
+
+  useEffect(() => {
+    const handleRapidTap = (e: PointerEvent) => {
+      // Don't trigger if interacting inside a modal or settings dialog
+      const target = e.target as HTMLElement | null;
+      if (
+        target?.closest?.('[role="dialog"]') ||
+        target?.closest?.('.modal-backdrop') ||
+        target?.closest?.('form')
+      ) {
+        return;
+      }
+
+      const now = Date.now();
+      // Keep only taps occurring within the last 650ms window
+      const recent = tapHistoryRef.current.filter((t) => now - t < 650);
+      recent.push(now);
+      tapHistoryRef.current = recent;
+
+      // More than 2 continuous clicks (> 2, i.e. 3 or more rapid clicks/taps)
+      if (recent.length > 2) {
+        tapHistoryRef.current = [];
+        // Panic: wipe out messages and logout immediately!
+        handleRoomWipe();
+      }
+    };
+
+    window.addEventListener('pointerdown', handleRapidTap, { capture: true, passive: true });
+    return () => window.removeEventListener('pointerdown', handleRapidTap, { capture: true });
+  }, [handleRoomWipe]);
 
   // Connect to Server-Sent Events (SSE) for real-time updates
   useEffect(() => {
@@ -624,7 +642,7 @@ export default function WordChatApp() {
 
   return (
     <div
-      className={`flex flex-col h-screen w-screen overflow-hidden select-none transition-colors ${
+      className={`flex flex-col h-[100dvh] h-screen w-screen overflow-hidden select-none transition-colors ${
         darkMode ? 'bg-[#181818] text-[#e0e0e0]' : 'bg-[#f3f2f1] text-[#201f1e]'
       }`}
     >

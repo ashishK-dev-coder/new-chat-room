@@ -158,23 +158,27 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
     // 3. Press Enter to send line
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      const trimmed = inputText.trim();
-      if (trimmed) {
-        const replyPayload = taggedMessage
-          ? {
-              id: taggedMessage.id,
-              senderName: taggedMessage.prefix || taggedMessage.senderName,
-              text: taggedMessage.text,
-            }
-          : undefined;
+      handleSendCurrent();
+    }
+  };
 
-        onSendMessage(trimmed, replyPayload);
-        setInputText('');
-        setTaggedMessage(null);
-        setTimeout(() => {
-          inputRef.current?.focus();
-        }, 10);
-      }
+  const handleSendCurrent = () => {
+    const trimmed = inputText.trim();
+    if (trimmed) {
+      const replyPayload = taggedMessage
+        ? {
+            id: taggedMessage.id,
+            senderName: taggedMessage.prefix || taggedMessage.senderName,
+            text: taggedMessage.text,
+          }
+        : undefined;
+
+      onSendMessage(trimmed, replyPayload);
+      setInputText('');
+      setTaggedMessage(null);
+      setTimeout(() => {
+        inputRef.current?.focus();
+      }, 10);
     }
   };
 
@@ -197,13 +201,13 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
     <div
       ref={containerRef}
       onClick={handleContainerClick}
-      className={`flex-1 overflow-y-auto flex justify-center py-6 px-4 cursor-default relative transition-colors ${
+      className={`flex-1 overflow-y-auto flex justify-center py-1.5 sm:py-6 px-1 sm:px-4 cursor-default relative transition-colors ${
         darkMode ? 'bg-[#181818]' : 'bg-[#ebebeb]'
       }`}
     >
       {/* A4 Document Paper Sheet */}
       <div
-        className={`word-page min-h-[1056px] w-[816px] max-w-full px-[88px] py-[64px] relative shadow-md flex flex-col justify-between transition-colors ${
+        className={`word-page min-h-full sm:min-h-[1056px] w-full max-w-[816px] px-3.5 sm:px-12 md:px-[88px] py-4 sm:py-10 md:py-[64px] relative shadow-md flex flex-col justify-between transition-colors ${
           darkMode
             ? 'bg-[#242424] text-[#e0e0e0] border border-[#383838] shadow-2xl'
             : 'bg-white text-[#201f1e] shadow-md'
@@ -217,30 +221,30 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
         {/* Document Header Zone */}
         <div>
           <div
-            className={`border-b pb-2 mb-4 select-none opacity-80 ${
+            className={`border-b pb-2 mb-3 sm:mb-4 select-none opacity-80 ${
               darkMode ? 'border-[#3e3e42]' : 'border-[#c8c6c4]'
             }`}
           >
-            <div className={`flex items-center justify-between text-[10px] ${
+            <div className={`flex flex-col sm:flex-row sm:items-center justify-between text-[9.5px] sm:text-[10px] gap-0.5 ${
               darkMode ? 'text-[#9ca3af]' : 'text-[#605e5c]'
             }`}>
-              <span className={`font-semibold uppercase tracking-wider ${
+              <span className={`font-semibold uppercase tracking-wider truncate ${
                 darkMode ? 'text-[#4ba3f4]' : 'text-[#185abd]'
               }`}>
-                AI Systems Engineering &bull; Model Architecture &amp; Deployment Standards
+                AI Systems Engineering &bull; Architecture &amp; Deployment Standards
               </span>
-              <span>Doc Ref: AI-SPEC-8820</span>
+              <span className="shrink-0">Doc Ref: AI-SPEC-8820</span>
             </div>
           </div>
 
           {/* Document Main Heading */}
-          <div className="mb-5">
-            <h1 className={`text-[17pt] font-bold leading-tight mb-1 ${
+          <div className="mb-3.5 sm:mb-5">
+            <h1 className={`text-[13.5pt] sm:text-[17pt] font-bold leading-tight mb-1 ${
               darkMode ? 'text-[#f3f4f6]' : 'text-[#1f2937]'
             }`}>
               AI Engineer Technical Architecture &amp; Core Competency Framework
             </h1>
-            <p className={`text-[10pt] leading-normal italic ${
+            <p className={`text-[9pt] sm:text-[10pt] leading-normal italic ${
               darkMode ? 'text-[#9ca3af]' : 'text-[#4b5563]'
             }`}>
               System architecture specifications, fine-tuning methodologies, RAG orchestration, and high-throughput production inference guidelines for AI engineering systems.
@@ -451,15 +455,16 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                                 : `• ${section.notePrefix}:`}
                             </span>
 
-                            <div className="flex-1 relative">
+                            <div className="flex-1 relative flex items-center">
                               <textarea
                                 ref={inputRef}
                                 value={inputText}
                                 onChange={(e) => setInputText(e.target.value)}
                                 onKeyDown={handleKeyDown}
                                 placeholder="Type technical clause and press Enter to append..."
+                                enterKeyHint="send"
                                 rows={1}
-                                className={`w-full resize-none bg-transparent outline-none border-none p-0 leading-relaxed text-[10.5pt] ${
+                                className={`w-full resize-none bg-transparent outline-none border-none p-0 leading-relaxed text-[16px] sm:text-[10.5pt] ${
                                   darkMode
                                     ? 'text-[#f3f4f6] placeholder-[#6b7280]'
                                     : 'text-[#111827] placeholder-[#9ca3af]'
@@ -477,6 +482,22 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                                     darkMode ? 'bg-[#f3f4f6]' : 'bg-[#111827]'
                                   }`}
                                 />
+                              )}
+
+                              {/* Mobile Append Button when clause text is typed */}
+                              {inputText.trim().length > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={handleSendCurrent}
+                                  className={`ml-1.5 px-2 py-0.5 rounded text-[10px] sm:text-[11px] font-semibold transition-colors shrink-0 cursor-pointer shadow-xs ${
+                                    darkMode
+                                      ? 'bg-[#4ba3f4] text-[#0f172a] hover:bg-[#38bdf8]'
+                                      : 'bg-[#185abd] text-white hover:bg-[#104a9b]'
+                                  }`}
+                                  title="Append clause"
+                                >
+                                  Append
+                                </button>
                               )}
                             </div>
                           </div>

@@ -9,7 +9,7 @@ interface WordRulerProps {
 export const WordRuler: React.FC<WordRulerProps> = ({ darkMode = false }) => {
   return (
     <div
-      className={`w-full flex items-center justify-center shrink-0 border-b select-none py-0.5 transition-colors ${
+      className={`hidden md:flex w-full items-center justify-center shrink-0 border-b select-none py-0.5 transition-colors ${
         darkMode ? 'bg-[#181818] border-[#333333]' : 'bg-[#f3f2f1] border-[#e1dfdd]'
       }`}
     >

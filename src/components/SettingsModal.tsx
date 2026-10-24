@@ -114,11 +114,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 value={tempTitle}
                 onChange={(e) => setTempTitle(e.target.value)}
                 placeholder="e.g. Financial_Audit_Draft_2026.docx"
-                className="w-full h-8 px-2.5 bg-white border border-[#8a8886] rounded text-xs text-[#201f1e] focus:outline-none focus:border-[#185abd]"
+                className="w-full h-8 px-2.5 bg-white border border-[#8a8886] rounded text-[16px] sm:text-xs text-[#201f1e] focus:outline-none focus:border-[#185abd]"
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1">
                 <label className="text-xs font-semibold text-[#323130]">Room Identifier</label>
                 <input
@@ -126,7 +126,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   value={tempRoom}
                   onChange={(e) => setTempRoom(e.target.value)}
                   placeholder="e.g. room-alpha"
-                  className="w-full h-8 px-2.5 bg-white border border-[#8a8886] rounded text-xs text-[#201f1e] focus:outline-none focus:border-[#185abd]"
+                  className="w-full h-8 px-2.5 bg-white border border-[#8a8886] rounded text-[16px] sm:text-xs text-[#201f1e] focus:outline-none focus:border-[#185abd]"
                 />
               </div>
 
@@ -140,7 +140,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   value={tempPw}
                   onChange={(e) => setTempPw(e.target.value)}
                   placeholder="Vercel ENV (CHAT_PASSWORD)"
-                  className="w-full h-8 px-2.5 bg-white border border-[#8a8886] rounded text-xs text-[#201f1e] focus:outline-none focus:border-[#185abd]"
+                  className="w-full h-8 px-2.5 bg-white border border-[#8a8886] rounded text-[16px] sm:text-xs text-[#201f1e] focus:outline-none focus:border-[#185abd]"
                 />
               </div>
             </div>

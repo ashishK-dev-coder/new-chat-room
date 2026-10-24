@@ -74,23 +74,23 @@ export const WordTitleBar: React.FC<WordTitleBarProps> = ({
         {/* Redo */}
         <button
           title="Redo (Ctrl+Y)"
-          className="p-1 hover:bg-white/20 rounded transition-colors text-white/90 hover:text-white opacity-70 cursor-pointer"
+          className="hidden sm:block p-1 hover:bg-white/20 rounded transition-colors text-white/90 hover:text-white opacity-70 cursor-pointer"
         >
           <Redo2 className="w-3.5 h-3.5" />
         </button>
 
         {/* Document Title */}
-        <div className="flex items-center ml-2 space-x-1.5">
-          <span className="font-semibold text-xs tracking-wide">
+        <div className="flex items-center ml-1 sm:ml-2 space-x-1.5 min-w-0">
+          <span className="font-semibold text-xs tracking-wide truncate max-w-[110px] xs:max-w-[160px] sm:max-w-[240px] md:max-w-none">
             {docTitle}
           </span>
           {isSaving ? (
-            <span className="text-amber-200 text-[11px] flex items-center space-x-1 animate-pulse select-none">
+            <span className="text-amber-200 text-[10px] sm:text-[11px] flex items-center space-x-1 animate-pulse select-none shrink-0">
               <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-300"></span>
               <span>- Saving...</span>
             </span>
           ) : (
-            <span className="text-white/60 text-[11px] select-none">- Saved to OneDrive</span>
+            <span className="text-white/60 text-[11px] select-none hidden sm:inline shrink-0">- Saved to OneDrive</span>
           )}
         </div>
       </div>
@@ -185,8 +185,8 @@ export const WordTitleBar: React.FC<WordTitleBarProps> = ({
           <Settings className="w-3.5 h-3.5" />
         </button>
 
-        {/* Window controls */}
-        <div className="flex items-center pl-2 ml-1 border-l border-white/20">
+        {/* Window controls (desktop only) */}
+        <div className="hidden md:flex items-center pl-2 ml-1 border-l border-white/20">
           <button
             onClick={onPanic}
             title="Minimize"

@@ -64,8 +64,8 @@ export const WordStatusBar: React.FC<WordStatusBarProps> = ({
         </div>
       </div>
 
-      {/* Right items: Focus, Views, Zoom Slider */}
-      <div className="flex items-center space-x-2">
+      {/* Right items: Focus, Views, Zoom Slider (desktop/tablet) */}
+      <div className="hidden sm:flex items-center space-x-2">
         <button
           title="Focus Mode"
           className="hover:bg-white/20 px-1 py-0.5 rounded text-white/80 hover:text-white transition hidden sm:inline"
