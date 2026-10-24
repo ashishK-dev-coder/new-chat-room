@@ -361,7 +361,7 @@ export default function WordChatApp() {
       if (cached) {
         const parsed = JSON.parse(cached);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          setMessages(parsed.slice(-4));
+          setMessages(parsed.slice(-5));
         }
       }
     } catch {
@@ -524,7 +524,7 @@ export default function WordChatApp() {
                 ...m,
                 status: m.status || 'delivered',
               }));
-              setMessages(confirmed.slice(-4));
+              setMessages(confirmed.slice(-5));
             }
             if (data.clientCount !== undefined) {
               const count = Math.min(2, Math.max(1, Number(data.clientCount) || 1));
@@ -547,7 +547,7 @@ export default function WordChatApp() {
                   ...incomingMsg,
                   status: 'delivered',
                 };
-                return updated.slice(-4);
+                return updated.slice(-5);
               }
 
               // 2. If this was our own optimistic message, replace it with confirmed message
@@ -566,7 +566,7 @@ export default function WordChatApp() {
                 updated = [...prev, incomingMsg];
               }
 
-              return updated.slice(-4);
+              return updated.slice(-5);
             });
 
             if (data.clientCount !== undefined) {
@@ -585,11 +585,31 @@ export default function WordChatApp() {
               // 1. If currently logged out: activate discreet Font Color 'A' border alert
               if (!isUnlockedRef.current) {
                 setIsFontColorBlinking(true);
+              } else {
+                // If unlocked and reading: immediately send seen acknowledgment to peer co-author
+                if (incomingMsg.id) {
+                  fetch('/api/chat/seen', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      roomId,
+                      messageIds: [incomingMsg.id],
+                      senderId: currentTabId,
+                    }),
+                  }).catch(() => {});
+                }
               }
 
               // 2. Play notification sound chime:
               playNotificationSound();
             }
+          } else if (data.type === 'seen' && Array.isArray(data.messageIds)) {
+            // Co-author has viewed message: update to double tick (seen)
+            setMessages((prev) =>
+              prev.map((m) =>
+                data.messageIds.includes(m.id) ? { ...m, status: 'seen' } : m
+              )
+            );
           } else if (data.type === 'clear') {
             setMessages([]);
             if (typeof window !== 'undefined') {
@@ -678,6 +698,72 @@ export default function WordChatApp() {
     return () => clearInterval(interval);
   }, [roomId, tabAuthorId]);
 
+  // Fast 1.2s Sync Poller when unlocked: eliminates any serverless buffering latency on Vercel
+  useEffect(() => {
+    if (!isUnlocked || !tabAuthorId) return;
+
+    let isMounted = true;
+    const pollSync = async () => {
+      try {
+        const res = await fetch(`/api/chat/sync?room=${encodeURIComponent(roomId)}&_t=${Date.now()}`);
+        if (res.ok && isMounted) {
+          const data = await res.json();
+          if (Array.isArray(data?.messages) && data.messages.length > 0) {
+            setMessages((prev) => {
+              const serverMsgs: ChatMessage[] = data.messages;
+              let changed = false;
+              const merged = serverMsgs.map((sm) => {
+                const local = prev.find((pm) => pm.id === sm.id);
+                if (local && local.status === 'pending' && sm.status === 'delivered') {
+                  changed = true;
+                  return sm;
+                }
+                if (!local || local.status !== sm.status || local.text !== sm.text) {
+                  changed = true;
+                  return sm;
+                }
+                return local;
+              });
+              if (changed || merged.length !== prev.length) {
+                return merged.slice(-5);
+              }
+              return prev;
+            });
+
+            // If there are peer messages that are not yet marked seen:
+            const activeId = tabAuthorIdRef.current || tabAuthorId;
+            const unreadIds = data.messages
+              .filter((m: ChatMessage) => m.senderId !== activeId && m.status !== 'seen')
+              .map((m: ChatMessage) => m.id);
+
+            if (unreadIds.length > 0) {
+              fetch('/api/chat/seen', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  roomId,
+                  messageIds: unreadIds,
+                  senderId: activeId,
+                }),
+              }).catch(() => {});
+            }
+          }
+          if (data?.clientCount !== undefined) {
+            setParticipantCount(Math.min(2, Math.max(1, Number(data.clientCount) || 1)));
+          }
+        }
+      } catch {
+        // ignore offline sync
+      }
+    };
+
+    const interval = setInterval(pollSync, 1200);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [isUnlocked, roomId, tabAuthorId]);
+
   // Send message handler with 0ms instant optimistic update + acknowledgment tracking
   const handleSendMessage = async (text: string, replyTo?: ChatMessage['replyTo']) => {
     if (!text.trim()) return;
@@ -701,7 +787,7 @@ export default function WordChatApp() {
     // Instant 0ms UI update: message appears immediately with pending... status
     setMessages((prev) => {
       const updated = [...prev, optimisticMsg];
-      return updated.slice(-4);
+      return updated.slice(-5);
     });
 
     try {
@@ -776,6 +862,21 @@ export default function WordChatApp() {
         }
         if (data.messages) {
           setMessages(data.messages.slice(-4));
+          const activeId = tabAuthorIdRef.current || tabAuthorId;
+          const peerUnread = data.messages
+            .filter((m: ChatMessage) => m.senderId !== activeId && m.status !== 'seen')
+            .map((m: ChatMessage) => m.id);
+          if (peerUnread.length > 0) {
+            fetch('/api/chat/seen', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                roomId,
+                messageIds: peerUnread,
+                senderId: activeId,
+              }),
+            }).catch(() => {});
+          }
         }
         return { success: true };
       } else {

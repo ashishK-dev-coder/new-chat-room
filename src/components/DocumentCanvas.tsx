@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { CornerUpLeft, X, Clock, CheckCheck, AlertCircle } from 'lucide-react';
+import { CornerUpLeft, X, Clock, Check, CheckCheck, AlertCircle } from 'lucide-react';
 import { ChatMessage } from '@/lib/chatStore';
 import { FontSettings } from './WordRibbon';
 
@@ -62,6 +62,15 @@ const AI_SECTIONS: AISection[] = [
       'Applying post-training quantization schemes (FP8, AWQ, GPTQ) to minimize memory bandwidth constraints while preserving model evaluation metrics.',
     ],
     notePrefix: 'Deployment Parameter 4.1',
+  },
+  {
+    id: 5,
+    title: '5. LLM Evaluation Benchmarks, Guardrails & Observability Standards',
+    points: [
+      'Establishing automated evaluation benchmarks utilizing Ragas, G-Eval, and synthetic test datasets for hallucination detection and domain calibration.',
+      'Integrating input/output guardrails, prompt injection sanitization filters, and OpenTelemetry distributed tracing across inference pipelines.',
+    ],
+    notePrefix: 'Observability Protocol 5.1',
   },
 ];
 
@@ -215,10 +224,11 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   }, [isUnlocked]);
 
   // When logged out (!isUnlocked), NO messages are shown on the UI!
-  const displayedMessages = isUnlocked ? messages.slice(-4) : [];
+  // Strictly maintain at most 5 messages (oldest auto-pruned)
+  const displayedMessages = isUnlocked ? messages.slice(-5) : [];
 
-  // Determine active slot index for typing
-  const activeSlotIndex = isUnlocked ? Math.min(displayedMessages.length, 3) : -1;
+  // Determine active slot index for typing (up to index 4 for 5 slots)
+  const activeSlotIndex = isUnlocked ? Math.min(displayedMessages.length, AI_SECTIONS.length - 1) : -1;
 
   // Clicking document canvas does NOT open password popup (only focuses if already unlocked)
   const handleContainerClick = () => {
@@ -285,6 +295,21 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
         return '"Times New Roman", Times, serif';
       default:
         return 'Segoe UI, sans-serif';
+    }
+  };
+
+  const formatMessageTime = (ts?: number): string => {
+    if (!ts) return '';
+    try {
+      const d = new Date(ts);
+      const hours = String(d.getHours()).padStart(2, '0');
+      const minutes = String(d.getMinutes()).padStart(2, '0');
+      const seconds = String(d.getSeconds()).padStart(2, '0');
+      const ms = String(d.getMilliseconds()).padStart(3, '0');
+      // Sub-second precision (e.g. 10:45:00.128)
+      return `${hours}:${minutes}:${seconds}.${ms}`;
+    } catch {
+      return '';
     }
   };
 
@@ -439,55 +464,79 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                             </div>
 
                             <div className="flex items-center justify-end shrink-0 space-x-1.5 self-end sm:self-center pt-0.5 sm:pt-0">
-                              {/* Message Delivery & Confirmation Status Indicator */}
-                              {currentSlotMsg.status === 'pending' ? (
-                                <span
-                                  className={`inline-flex items-center space-x-1 text-[7pt] sm:text-[7.5pt] font-mono select-none px-1.5 py-0.5 rounded tracking-tight transition-all ${
-                                    darkMode
-                                      ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
-                                      : 'bg-amber-50 text-amber-700 border border-amber-200'
-                                  }`}
-                                  title="Sending clause... Pending server confirmation"
-                                >
-                                  <Clock className="w-2.5 h-2.5 animate-spin" style={{ animationDuration: '2.5s' }} />
-                                  <span>pending...</span>
-                                </span>
-                              ) : currentSlotMsg.status === 'failed' ? (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    onSendMessage(currentSlotMsg.text, currentSlotMsg.replyTo);
-                                  }}
-                                  className={`inline-flex items-center space-x-1 text-[7pt] sm:text-[7.5pt] select-none px-1.5 py-0.5 rounded cursor-pointer transition-all ${
-                                    darkMode
-                                      ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 hover:bg-rose-500/30'
-                                      : 'bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100'
-                                  }`}
-                                  title="Delivery failed. Click to retry"
-                                >
-                                  <AlertCircle className="w-2.5 h-2.5" />
-                                  <span>failed (retry)</span>
-                                </button>
-                              ) : (
-                                <span
-                                  className={`inline-flex items-center space-x-1 text-[7pt] sm:text-[7.5pt] select-none px-1.5 py-0.5 rounded transition-all ${
-                                    darkMode
-                                      ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
-                                      : 'text-emerald-600 bg-emerald-50 border border-emerald-200/80'
-                                  }`}
-                                  title={
-                                    currentSlotMsg.senderId === currentUserId
-                                      ? 'Clause confirmed & acknowledged by server'
-                                      : 'Clause delivered from co-author'
-                                  }
-                                >
-                                  <CheckCheck className="w-2.5 h-2.5 sm:w-3 sm:h-3 stroke-[2.2]" />
-                                  <span className="font-medium tracking-tight">
-                                    {currentSlotMsg.senderId === currentUserId ? 'acknowledged' : 'delivered'}
+                              {/* Message Time and Status Indicator */}
+                              <div className="flex items-center space-x-1 select-none text-[7pt] sm:text-[7.5pt] tracking-tight">
+                                {/* Formatted timestamp (e.g. 10:45 AM) */}
+                                {currentSlotMsg.timestamp && (
+                                  <span className={`font-mono text-[6.5pt] sm:text-[7.5pt] mr-0.5 opacity-80 ${
+                                    darkMode ? 'text-[#9ca3af]' : 'text-[#605e5c]'
+                                  }`}>
+                                    {formatMessageTime(currentSlotMsg.timestamp)}
                                   </span>
-                                </span>
-                              )}
+                                )}
+
+                                {/* Single tick for going/sent, double tick for seen */}
+                                {currentSlotMsg.status === 'pending' ? (
+                                  <span
+                                    className={`inline-flex items-center space-x-0.5 font-mono px-1 py-0.5 rounded tracking-tight transition-all ${
+                                      darkMode
+                                        ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                                        : 'bg-amber-50 text-amber-700 border border-amber-200'
+                                    }`}
+                                    title="Sending clause... Going"
+                                  >
+                                    <Clock className="w-2.5 h-2.5 animate-spin" style={{ animationDuration: '2.5s' }} />
+                                    <span>going...</span>
+                                  </span>
+                                ) : currentSlotMsg.status === 'failed' ? (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onSendMessage(currentSlotMsg.text, currentSlotMsg.replyTo);
+                                    }}
+                                    className={`inline-flex items-center space-x-1 px-1.5 py-0.5 rounded cursor-pointer transition-all ${
+                                      darkMode
+                                        ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 hover:bg-rose-500/30'
+                                        : 'bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100'
+                                    }`}
+                                    title="Delivery failed. Click to retry"
+                                  >
+                                    <AlertCircle className="w-2.5 h-2.5" />
+                                    <span>failed (retry)</span>
+                                  </button>
+                                ) : currentSlotMsg.status === 'seen' ? (
+                                  /* Double Tick: Seen by co-author */
+                                  <span
+                                    className={`inline-flex items-center space-x-0.5 px-1 py-0.5 rounded font-medium transition-all ${
+                                      darkMode
+                                        ? 'text-[#4ba3f4] bg-[#4ba3f4]/15 border border-[#4ba3f4]/30'
+                                        : 'text-[#0078d4] bg-[#f0f9ff] border border-[#0078d4]/30'
+                                    }`}
+                                    title="Seen by co-author"
+                                  >
+                                    <CheckCheck className="w-3 h-3 stroke-[2.4]" />
+                                    <span className="font-semibold text-[6.5pt] sm:text-[7pt] tracking-tight">seen</span>
+                                  </span>
+                                ) : (
+                                  /* Single Tick: Going / Delivered to server */
+                                  <span
+                                    className={`inline-flex items-center space-x-0.5 px-1 py-0.5 rounded font-medium transition-all ${
+                                      darkMode
+                                        ? 'text-[#9ca3af] bg-white/5 border border-white/10'
+                                        : 'text-[#64748b] bg-slate-50 border border-slate-200'
+                                    }`}
+                                    title={
+                                      currentSlotMsg.senderId === currentUserId
+                                        ? 'Sent & delivered to server (waiting for co-author)'
+                                        : 'Received clause'
+                                    }
+                                  >
+                                    <Check className="w-2.5 h-2.5 stroke-[2.2]" />
+                                    <span className="text-[6.5pt] sm:text-[7pt] tracking-tight">sent</span>
+                                  </span>
+                                )}
+                              </div>
 
                               {/* Backward reply arrow to tag this message */}
                               <button

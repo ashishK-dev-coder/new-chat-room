@@ -1,12 +1,14 @@
-// In-memory ephemeral store for strictly 2-person real-time chat (no database, no persistence)
+import { getRedisClient } from './redis';
 
+// Ephemeral store for strictly 2-person real-time chat with optional Upstash Redis Pub/Sub support
 export interface ChatMessage {
   id: string;
   senderId: string;
   senderName: string;
   text: string;
   timestamp: number;
-  status?: 'pending' | 'delivered' | 'failed';
+  status?: 'pending' | 'delivered' | 'seen' | 'failed';
+  seenAt?: number;
   replyTo?: {
     id: string;
     senderName: string;
@@ -38,7 +40,7 @@ if (process.env.NODE_ENV !== 'production') {
   global.__wordChatRooms = rooms;
 }
 
-const MAX_MESSAGES = 4; // strictly maintain at most 4 messages
+const MAX_MESSAGES = 5; // strictly maintain at most 5 messages (oldest automatically pruned and removed)
 const MAX_AUTHORS = 2; // strictly 2-person chat room
 const HEARTBEAT_TIMEOUT_MS = 6000; // 6 seconds threshold for dead author detection
 
@@ -288,7 +290,66 @@ export function addMessageToRoom(
 
   deadIds.forEach((id) => room.clients.delete(id));
 
+  // Sync to Redis Pub/Sub if configured
+  const redis = getRedisClient();
+  if (redis) {
+    redis.set(`room:${roomId}:messages`, JSON.stringify(room.messages), { ex: 86400 }).catch(() => {});
+    redis.publish(`room:${roomId}:pubsub`, payload).catch(() => {});
+  }
+
   return { success: true, messages: room.messages, message: newMsg };
+}
+
+// Mark messages as seen when the co-author opens / reads the document
+export async function markMessagesAsSeen(
+  roomId: string,
+  messageIds: string[],
+  seenBy: string
+): Promise<{ success: boolean; seenIds: string[] }> {
+  const room = getOrCreateRoom(roomId);
+  const now = Date.now();
+  const seenIds: string[] = [];
+
+  room.messages = room.messages.map((m) => {
+    // If the message is from the peer author and in the messageIds list
+    if (messageIds.includes(m.id) && m.senderId !== seenBy && m.status !== 'seen') {
+      seenIds.push(m.id);
+      return {
+        ...m,
+        status: 'seen' as const,
+        seenAt: now,
+      };
+    }
+    return m;
+  });
+
+  if (seenIds.length > 0) {
+    const payload = JSON.stringify({
+      type: 'seen',
+      messageIds: seenIds,
+      seenBy,
+      seenAt: now,
+    });
+
+    const deadIds: string[] = [];
+    room.clients.forEach((sub, id) => {
+      try {
+        const ok = sub.send(`data: ${payload}\n\n`);
+        if (!ok) deadIds.push(id);
+      } catch {
+        deadIds.push(id);
+      }
+    });
+    deadIds.forEach((id) => room.clients.delete(id));
+
+    const redis = getRedisClient();
+    if (redis) {
+      redis.set(`room:${roomId}:messages`, JSON.stringify(room.messages), { ex: 86400 }).catch(() => {});
+      redis.publish(`room:${roomId}:pubsub`, payload).catch(() => {});
+    }
+  }
+
+  return { success: true, seenIds };
 }
 
 export function clearRoomMessages(roomId: string, senderId?: string): { success: boolean } {
@@ -313,12 +374,38 @@ export function clearRoomMessages(roomId: string, senderId?: string): { success:
 
   deadIds.forEach((id) => room.clients.delete(id));
 
+  const redis = getRedisClient();
+  if (redis) {
+    redis.del(`room:${roomId}:messages`).catch(() => {});
+    redis.publish(`room:${roomId}:pubsub`, payload).catch(() => {});
+  }
+
   return { success: true };
 }
 
 export function getRoomMessages(roomId: string): ChatMessage[] {
   const room = rooms.get(roomId);
   return room ? room.messages.slice(-MAX_MESSAGES) : [];
+}
+
+export async function getRoomMessagesAsync(roomId: string): Promise<ChatMessage[]> {
+  const redis = getRedisClient();
+  if (redis) {
+    try {
+      const data = await redis.get<string | ChatMessage[]>(`room:${roomId}:messages`);
+      if (data) {
+        const parsed = typeof data === 'string' ? JSON.parse(data) : data;
+        if (Array.isArray(parsed)) {
+          const room = getOrCreateRoom(roomId);
+          room.messages = parsed.slice(-MAX_MESSAGES);
+          return room.messages;
+        }
+      }
+    } catch {
+      // fallback to memory
+    }
+  }
+  return getRoomMessages(roomId);
 }
 
 export function verifyRoomPassword(_roomId: string, passwordAttempt: string): boolean {
