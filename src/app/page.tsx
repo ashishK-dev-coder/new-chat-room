@@ -717,50 +717,18 @@ export default function WordChatApp() {
     };
   }, [roomId, tabAuthorId]);
 
-  // Active author presence heartbeat: runs immediately (0ms on mount) + 1.2s rapid cycle
+  // Unified Adaptive Sync & Presence Engine (Dramatically cuts network requests & Redis commands)
   useEffect(() => {
     if (!tabAuthorId) return;
 
     let isMounted = true;
-    const sendPresencePing = async () => {
+    let syncTimeout: NodeJS.Timeout | null = null;
+
+    const runSync = async () => {
       const activeId = tabAuthorIdRef.current || tabAuthorId;
       if (!activeId || !roomId || !isMounted) return;
 
       try {
-        const res = await fetch('/api/chat/heartbeat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ roomId, senderId: activeId }),
-        });
-        if (res.ok && isMounted) {
-          const data = await res.json();
-          if (data?.clientCount !== undefined) {
-            setParticipantCount(Math.min(2, Math.max(1, Number(data.clientCount) || 1)));
-          }
-        }
-      } catch {
-        // ignore offline ping
-      }
-    };
-
-    // Immediate 0ms ping on tab load (instant Author 2 online detection!)
-    sendPresencePing();
-
-    const interval = setInterval(sendPresencePing, 1200);
-    return () => {
-      isMounted = false;
-      clearInterval(interval);
-    };
-  }, [roomId, tabAuthorId]);
-
-  // Fast Sync Poller: runs continuously to guarantee delivery & plays notification sound
-  useEffect(() => {
-    if (!tabAuthorId) return;
-
-    let isMounted = true;
-    const pollSync = async () => {
-      try {
-        const activeId = tabAuthorIdRef.current || tabAuthorId;
         const res = await fetch(
           `/api/chat/sync?room=${encodeURIComponent(roomId)}&senderId=${encodeURIComponent(activeId)}&_t=${Date.now()}`
         );
@@ -813,22 +781,47 @@ export default function WordChatApp() {
               }
             }
           }
+
           if (data?.clientCount !== undefined) {
             setParticipantCount(Math.min(2, Math.max(1, Number(data.clientCount) || 1)));
           }
         }
       } catch {
         // ignore offline sync
+      } finally {
+        if (isMounted) {
+          // Adaptive polling interval based on user state
+          let nextDelay = 1500;
+          if (document.hidden) {
+            nextDelay = 7000; // Background tab: 7s
+          } else if (!isUnlockedRef.current) {
+            nextDelay = 4000; // Locked Protected View: 4s
+          } else {
+            nextDelay = 1500; // Active chat: 1.5s
+          }
+          syncTimeout = setTimeout(runSync, nextDelay);
+        }
       }
     };
 
-    const pollIntervalTime = isUnlocked ? 600 : 2000;
-    const interval = setInterval(pollSync, pollIntervalTime);
+    // Immediate 0ms sync on mount
+    runSync();
+
+    // Instant sync when tab gains visibility
+    const handleVisibility = () => {
+      if (!document.hidden && isMounted) {
+        if (syncTimeout) clearTimeout(syncTimeout);
+        runSync();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
     return () => {
       isMounted = false;
-      clearInterval(interval);
+      if (syncTimeout) clearTimeout(syncTimeout);
+      document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [isUnlocked, roomId, tabAuthorId, playNotificationSound]);
+  }, [roomId, tabAuthorId, playNotificationSound]);
 
   // Send message handler with 0ms instant optimistic update + acknowledgment tracking
   const handleSendMessage = async (text: string, replyTo?: ChatMessage['replyTo']) => {

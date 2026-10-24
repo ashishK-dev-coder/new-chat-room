@@ -29,6 +29,7 @@ export interface RoomState {
   clients: Map<string, ClientSubscriber>; // connectionId -> subscriber
   authorHeartbeats: Map<string, number>; // senderId -> lastTimestamp
   seqCounter?: number;
+  lastRedisFetchTime?: number; // In-memory TTL throttle to save thousands of Redis read calls
 }
 
 // Global variable across hot reloads in development
@@ -80,13 +81,7 @@ export function recordAuthorHeartbeat(roomId: string, senderId: string): number 
   room.authorHeartbeats.set(senderId, Date.now());
   const count = getActiveAuthorCount(room);
 
-  // Sync to Redis presence key with 8-second TTL if Redis is configured
-  const redis = getRedisClient();
-  if (redis) {
-    redis.set(`room:${roomId}:author:${senderId}`, '1', { ex: 8 }).catch(() => {});
-  }
-
-  // If author count changes (e.g. 1 -> 2 authors), broadcast immediately over SSE and Redis!
+  // If author count changes (e.g. 1 -> 2 authors), broadcast immediately over SSE
   if (count !== prevCount) {
     broadcastPresence(room);
   }
@@ -112,13 +107,7 @@ export function removeAuthorFromRoom(roomId: string, senderId: string): void {
   });
   connIdsToRemove.forEach((id) => room.clients.delete(id));
 
-  // 3. Remove from Redis presence if configured
-  const redis = getRedisClient();
-  if (redis) {
-    redis.del(`room:${roomId}:author:${senderId}`).catch(() => {});
-  }
-
-  // 4. Immediately broadcast updated presence (drops to 1 Author in < 50ms)
+  // 3. Immediately broadcast updated presence
   broadcastPresence(room);
 }
 
@@ -193,12 +182,6 @@ export function broadcastPresence(room: RoomState) {
   });
 
   deadIds.forEach((id) => room.clients.delete(id));
-
-  // Publish to Redis Pub/Sub for cross-lambda instant presence sync
-  const redis = getRedisClient();
-  if (redis) {
-    redis.publish(`room:${room.roomId}:pubsub`, payload).catch(() => {});
-  }
 }
 
 // Subscribe client to room SSE events with strict 2-person limit
@@ -348,10 +331,9 @@ export async function addMessageToRoom(
 
   deadIds.forEach((id) => room.clients.delete(id));
 
-  // Sync to Redis Pub/Sub and persistent cache
+  // Sync to Redis persistent cache
   if (redis) {
     redis.set(`room:${roomId}:messages`, JSON.stringify(room.messages), { ex: 86400 }).catch(() => {});
-    redis.publish(`room:${roomId}:pubsub`, payload).catch(() => {});
   }
 
   return { success: true, messages: room.messages, message: newMsg };
@@ -415,7 +397,6 @@ export async function markMessagesAsSeen(
 
     if (redis) {
       redis.set(`room:${roomId}:messages`, JSON.stringify(room.messages), { ex: 86400 }).catch(() => {});
-      redis.publish(`room:${roomId}:pubsub`, payload).catch(() => {});
     }
   }
 
@@ -449,7 +430,6 @@ export function clearRoomMessages(roomId: string, senderId?: string): { success:
   if (redis) {
     redis.del(`room:${roomId}:messages`).catch(() => {});
     redis.del(`room:${roomId}:seq`).catch(() => {});
-    redis.publish(`room:${roomId}:pubsub`, payload).catch(() => {});
   }
 
   return { success: true };
@@ -468,9 +448,17 @@ export function getRoomMessages(roomId: string): ChatMessage[] {
 
 export async function getRoomMessagesAsync(roomId: string): Promise<ChatMessage[]> {
   const room = getOrCreateRoom(roomId);
+  const now = Date.now();
+
+  // In-memory throttle: serve from memory if Redis was fetched < 1200ms ago on this server instance
+  if (room.lastRedisFetchTime && now - room.lastRedisFetchTime < 1200) {
+    return getRoomMessages(roomId);
+  }
+
   const redis = getRedisClient();
   if (redis) {
     try {
+      room.lastRedisFetchTime = now;
       const data = await redis.get<string | ChatMessage[]>(`room:${roomId}:messages`);
       if (data) {
         const parsed = typeof data === 'string' ? JSON.parse(data) : data;
