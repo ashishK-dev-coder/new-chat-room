@@ -47,6 +47,8 @@
   box-sizing: border-box;
   word-break: break-word;
   overflow-wrap: break-word;
+  touch-action: pan-y;
+  -webkit-tap-highlight-color: transparent;
 }
 
 @media (min-width: 640px) {

@@ -87,18 +87,37 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   } | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const lastTouchTimeRef = useRef<number>(0);
+  const isWipingRef = useRef(false);
+  const lastTapTimeRef = useRef<number>(0);
+  const lastTapPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
   // Trigger Panic Wipe: completely wipes messages on server + both clients and logs out immediately
   const triggerPanicWipe = useCallback(() => {
+    // If already wiping or already logged out, ignore
+    if (isWipingRef.current || !isUnlocked) return;
+    isWipingRef.current = true;
+
+    // Immediately dismiss virtual keyboard & clear text selection so mobile browser doesn't hang
+    if (typeof window !== 'undefined') {
+      window.getSelection()?.removeAllRanges();
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+    }
+
     setInputText('');
     setTaggedMessage(null);
+
     if (onPanicWipe) {
       onPanicWipe();
     } else {
       onPanicClear();
     }
-  }, [onPanicWipe, onPanicClear]);
+
+    setTimeout(() => {
+      isWipingRef.current = false;
+    }, 800);
+  }, [onPanicWipe, onPanicClear, isUnlocked]);
 
   // Double-click on any paragraph, point, heading, or document text triggers instant wipe out & logout
   const handleParagraphDoubleClick = (e: React.MouseEvent) => {
@@ -113,6 +132,8 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
     ) {
       return;
     }
+    e.preventDefault();
+    e.stopPropagation();
     triggerPanicWipe();
   };
 
@@ -130,14 +151,29 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
       return;
     }
 
+    const touch = e.changedTouches?.[0];
     const now = Date.now();
-    const timeDelta = now - lastTouchTimeRef.current;
-    if (timeDelta > 0 && timeDelta < 380) {
-      // Confirmed rapid double-tap!
-      lastTouchTimeRef.current = 0;
+    const timeDelta = now - lastTapTimeRef.current;
+
+    let distance = 0;
+    if (touch && lastTapPosRef.current.x !== 0) {
+      const dx = touch.clientX - lastTapPosRef.current.x;
+      const dy = touch.clientY - lastTapPosRef.current.y;
+      distance = Math.sqrt(dx * dx + dy * dy);
+    }
+
+    if (touch) {
+      lastTapPosRef.current = { x: touch.clientX, y: touch.clientY };
+    }
+
+    // Must be between 70ms and 360ms apart, within 45px radius (same spot double-tap)
+    if (timeDelta > 70 && timeDelta < 360 && distance < 45) {
+      lastTapTimeRef.current = 0;
+      lastTapPosRef.current = { x: 0, y: 0 };
+      e.stopPropagation();
       triggerPanicWipe();
     } else {
-      lastTouchTimeRef.current = now;
+      lastTapTimeRef.current = now;
     }
   };
 
@@ -297,18 +333,14 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
           {/* Document Main Heading & Abstract */}
           <div className="mb-3.5 sm:mb-5 w-full min-w-0">
             <h1
-              onDoubleClick={handleParagraphDoubleClick}
-              onTouchEnd={handleParagraphTouchEnd}
-              className={`text-[13pt] sm:text-[17pt] font-bold leading-tight mb-1 select-text cursor-default break-words ${
+              className={`text-[13pt] sm:text-[17pt] font-bold leading-tight mb-1 select-none sm:select-text cursor-default break-words ${
                 darkMode ? 'text-[#f3f4f6]' : 'text-[#1f2937]'
               }`}
             >
               AI Engineer Technical Architecture &amp; Core Competency Framework
             </h1>
             <p
-              onDoubleClick={handleParagraphDoubleClick}
-              onTouchEnd={handleParagraphTouchEnd}
-              className={`text-[9pt] sm:text-[10pt] leading-normal italic select-text cursor-default break-words ${
+              className={`text-[9pt] sm:text-[10pt] leading-normal italic select-none sm:select-text cursor-default break-words ${
                 darkMode ? 'text-[#9ca3af]' : 'text-[#4b5563]'
               }`}
             >
@@ -326,9 +358,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                 <div key={section.id} className="space-y-1.5 w-full min-w-0">
                   {/* Technical Section Heading */}
                   <h2
-                    onDoubleClick={handleParagraphDoubleClick}
-                    onTouchEnd={handleParagraphTouchEnd}
-                    className={`text-[11pt] sm:text-[11.5pt] font-bold select-text cursor-default break-words ${
+                    className={`text-[11pt] sm:text-[11.5pt] font-bold select-none sm:select-text cursor-default break-words ${
                       darkMode ? 'text-[#f3f4f6]' : 'text-[#111827]'
                     }`}
                   >
@@ -342,9 +372,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                     {section.points.map((pt, pIdx) => (
                       <li
                         key={pIdx}
-                        onDoubleClick={handleParagraphDoubleClick}
-                        onTouchEnd={handleParagraphTouchEnd}
-                        className="break-words select-text cursor-default"
+                        className="break-words select-none sm:select-text cursor-default"
                       >
                         {pt}
                       </li>
@@ -357,8 +385,6 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                       {/* 1. Existing Chat Message in this Slot */}
                       {currentSlotMsg && (
                         <div
-                          onDoubleClick={handleParagraphDoubleClick}
-                          onTouchEnd={handleParagraphTouchEnd}
                           className={`group relative py-1.5 px-2 sm:px-2.5 rounded-xs transition-colors my-1 w-full min-w-0 ${
                             darkMode
                               ? stealthMode === 'coauthor'
@@ -610,9 +636,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
             {/* Closing Point 5: Model Evaluation & Guardrails */}
             <div className="space-y-1.5 pt-1 w-full min-w-0">
               <h2
-                onDoubleClick={handleParagraphDoubleClick}
-                onTouchEnd={handleParagraphTouchEnd}
-                className={`text-[11pt] sm:text-[11.5pt] font-bold select-text cursor-default break-words ${
+                className={`text-[11pt] sm:text-[11.5pt] font-bold select-none sm:select-text cursor-default break-words ${
                   darkMode ? 'text-[#f3f4f6]' : 'text-[#111827]'
                 }`}
               >
@@ -622,16 +646,12 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                 darkMode ? 'text-[#d1d5db]' : 'text-[#374151]'
               }`}>
                 <li
-                  onDoubleClick={handleParagraphDoubleClick}
-                  onTouchEnd={handleParagraphTouchEnd}
-                  className="break-words select-text cursor-default"
+                  className="break-words select-none sm:select-text cursor-default"
                 >
                   Automated benchmarking pipelines quantifying factual accuracy, hallucination rates, and RLHF/DPO reward calibration.
                 </li>
                 <li
-                  onDoubleClick={handleParagraphDoubleClick}
-                  onTouchEnd={handleParagraphTouchEnd}
-                  className="break-words select-text cursor-default"
+                  className="break-words select-none sm:select-text cursor-default"
                 >
                   Enforcing deterministic input/output guardrails using Llama-Guard and NeMo to prevent prompt injections and data leaks.
                 </li>
@@ -651,8 +671,6 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
 
         {/* Document Footer Zone */}
         <div
-          onDoubleClick={handleParagraphDoubleClick}
-          onTouchEnd={handleParagraphTouchEnd}
           className={`border-t pt-3 mt-6 select-none opacity-70 w-full min-w-0 ${
             darkMode ? 'border-[#3e3e42]' : 'border-[#e5e7eb]'
           }`}

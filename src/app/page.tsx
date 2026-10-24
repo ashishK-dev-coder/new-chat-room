@@ -391,15 +391,28 @@ export default function WordChatApp() {
   }, [roomId]);
 
   // Explicit Room Wipe: When intentionally clearing all messages for both laptops
+  const isWipingRoomRef = useRef(false);
+
   const handleRoomWipe = useCallback(async () => {
-    setMessages([]);
-    setIsUnlocked(false);
-    setShowPasswordModal(false);
+    if (isWipingRoomRef.current) return;
+    isWipingRoomRef.current = true;
+
+    // 1. Immediately dismiss soft keyboard and clear text selection to prevent mobile browser hang/zoom freeze
     if (typeof window !== 'undefined') {
+      window.getSelection()?.removeAllRanges();
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
       sessionStorage.removeItem(`word_unlocked_${roomId}`);
       sessionStorage.removeItem(`word_chat_msgs_${roomId}`);
     }
 
+    // 2. Clear state and lock to Protected View
+    setMessages([]);
+    setIsUnlocked(false);
+    setShowPasswordModal(false);
+
+    // 3. Clear on server and notify peer author
     try {
       await fetch('/api/chat/clear', {
         method: 'POST',
@@ -411,6 +424,10 @@ export default function WordChatApp() {
       });
     } catch (err) {
       console.error('Room clear error:', err);
+    } finally {
+      setTimeout(() => {
+        isWipingRoomRef.current = false;
+      }, 800);
     }
   }, [roomId]);
 
@@ -452,12 +469,15 @@ export default function WordChatApp() {
 
   useEffect(() => {
     const handleRapidTap = (e: PointerEvent) => {
-      // Don't trigger if interacting inside a modal or settings dialog
+      // Don't trigger if already locked or interacting inside form inputs/dialogs
+      if (!isUnlockedRef.current) return;
       const target = e.target as HTMLElement | null;
       if (
         target?.closest?.('[role="dialog"]') ||
         target?.closest?.('.modal-backdrop') ||
-        target?.closest?.('form')
+        target?.closest?.('form') ||
+        target?.closest?.('textarea') ||
+        target?.closest?.('input')
       ) {
         return;
       }
