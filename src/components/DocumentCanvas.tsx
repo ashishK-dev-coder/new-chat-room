@@ -82,6 +82,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   } | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
   const isWipingRef = useRef(false);
   const lastTapTimeRef = useRef<number>(0);
   const lastTapPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -202,12 +203,16 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
   }, [onPanicClear]);
 
-  // Focus textarea when unlocked
+  // Focus textarea when unlocked and smoothly scroll to active clauses
   useEffect(() => {
     if (isUnlocked) {
       inputRef.current?.focus();
+      const timer = setTimeout(() => {
+        bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }, 120);
+      return () => clearTimeout(timer);
     }
-  }, [isUnlocked]);
+  }, [isUnlocked, messages.length]);
 
   // When logged out (!isUnlocked), NO messages are shown on the UI!
   // Strictly maintain at most 4 messages in ascending sequence/chronological order
@@ -309,13 +314,16 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
     <div
       ref={containerRef}
       onClick={handleContainerClick}
-      className={`flex-1 overflow-y-auto flex justify-center py-1.5 sm:py-6 px-1 sm:px-4 cursor-default relative transition-colors w-full min-w-0 ${
+      className={`flex-1 overflow-y-auto flex justify-center py-2 sm:py-8 pb-44 sm:pb-60 px-1.5 sm:px-6 cursor-default relative transition-colors w-full min-w-0 overscroll-y-contain ${
         darkMode ? 'bg-[#181818]' : 'bg-[#ebebeb]'
       }`}
+      style={{
+        WebkitOverflowScrolling: 'touch',
+      }}
     >
-      {/* A4 Document Paper Sheet */}
+      {/* A4 Document Paper Sheet with expanded dimensions */}
       <div
-        className={`word-page min-h-full sm:min-h-[1056px] w-full max-w-[816px] px-3 sm:px-12 md:px-[88px] py-4 sm:py-10 md:py-[64px] relative shadow-md flex flex-col justify-between transition-colors overflow-hidden ${
+        className={`word-page min-h-[1100px] sm:min-h-[1350px] w-full max-w-[880px] px-3 sm:px-12 md:px-[84px] py-4 sm:py-10 md:py-[56px] relative shadow-md flex flex-col justify-between transition-colors ${
           darkMode
             ? 'bg-[#242424] text-[#e0e0e0] border border-[#383838] shadow-2xl'
             : 'bg-white text-[#201f1e] shadow-md'
@@ -629,6 +637,11 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                           value={inputText}
                           onChange={(e) => setInputText(e.target.value)}
                           onKeyDown={handleKeyDown}
+                          onFocus={() => {
+                            setTimeout(() => {
+                              bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                            }, 180);
+                          }}
                           placeholder="Type technical clause and press Enter..."
                           enterKeyHint="send"
                           rows={1}
@@ -670,6 +683,8 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                       </div>
                     </div>
                   </div>
+                  {/* Bottom anchor for smooth scroll to latest clause */}
+                  <div ref={bottomRef} className="h-6 w-full shrink-0 pointer-events-none" />
                 </div>
               ) : (
                 /* When locked: Static AI review points & unlock trigger */

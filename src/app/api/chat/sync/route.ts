@@ -14,20 +14,7 @@ export async function GET(req: NextRequest) {
     }
 
     const messages = await getRoomMessagesAsync(roomId);
-    let clientCount = getActiveAuthorCount(room);
-
-    // Cross-lambda presence check via Redis keys if configured
-    const redis = getRedisClient();
-    if (redis) {
-      try {
-        const keys = await redis.keys(`room:${roomId}:author:*`);
-        if (Array.isArray(keys) && keys.length > 0) {
-          clientCount = Math.min(2, Math.max(1, keys.length));
-        }
-      } catch {
-        // fallback
-      }
-    }
+    const clientCount = getActiveAuthorCount(room);
 
     return NextResponse.json(
       {

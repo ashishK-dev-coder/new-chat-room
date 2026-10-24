@@ -1030,7 +1030,7 @@ export default function WordChatApp() {
 
       {/* 5. Document Canvas (A4 sheet, 4 messages max, inline enter typing) */}
       <div
-        className="flex-1 flex overflow-hidden w-full min-w-0"
+        className="flex-1 flex flex-col h-full min-h-0 w-full min-w-0 overflow-hidden"
         style={{
           transform: zoomLevel !== 100 ? `scale(${zoomLevel / 100})` : undefined,
           transformOrigin: 'top center',

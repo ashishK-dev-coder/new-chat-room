@@ -165,23 +165,9 @@ export function getActiveAuthorCount(room: RoomState): number {
   return Math.min(MAX_AUTHORS, Math.max(1, uniqueAuthors.size));
 }
 
-// Check if an author is permitted to join / send messages in this 2-person room
-export function canAuthorParticipate(roomId: string, senderId: string): boolean {
-  const room = getOrCreateRoom(roomId);
-  const activeIds = getActiveAuthorIds(room);
-
-  // If already an active author in room, allowed
-  if (activeIds.has(senderId)) {
-    return true;
-  }
-
-  // If room has less than 2 distinct authors connected, allowed
-  if (activeIds.size < MAX_AUTHORS) {
-    return true;
-  }
-
-  // Room is currently occupied by 2 other active authors
-  return false;
+// Allow authors in this secret room without artificial blocking
+export function canAuthorParticipate(_roomId: string, _senderId: string): boolean {
+  return true;
 }
 
 // Broadcast presence count strictly to all connected clients
@@ -222,15 +208,6 @@ export function subscribeToRoom(
   sendFn: (data: string) => boolean
 ): { unsubscribe: () => void; allowed: boolean } {
   const room = getOrCreateRoom(roomId);
-  const activeIds = getActiveAuthorIds(room);
-
-  // Enforce 2-person room capacity: if 2 distinct authors are already connected and this is a 3rd new author
-  if (!activeIds.has(senderId) && activeIds.size >= MAX_AUTHORS) {
-    return {
-      allowed: false,
-      unsubscribe: () => {},
-    };
-  }
 
   const connId = `conn_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const subscriber: ClientSubscriber = {
@@ -281,36 +258,38 @@ export async function addMessageToRoom(
 ): Promise<{ success: boolean; messages: ChatMessage[]; message?: ChatMessage; error?: string }> {
   const room = getOrCreateRoom(roomId);
 
-  // Enforce 2-person limit
-  if (!canAuthorParticipate(roomId, message.senderId)) {
-    return {
-      success: false,
-      messages: room.messages,
-      error: 'Room full: Only 2 persons are permitted in this chat room.',
-    };
-  }
-
   const redis = getRedisClient();
 
   // 1. Monotonically increasing atomic sequence counter for 100% deterministic ordering
   let nextSeq = (room.seqCounter || 0) + 1;
   if (redis) {
     try {
-      nextSeq = await redis.incr(`room:${roomId}:seq`);
+      const redisSeq = await redis.incr(`room:${roomId}:seq`);
+      if (typeof redisSeq === 'number' && !isNaN(redisSeq)) {
+        nextSeq = redisSeq;
+      }
     } catch {
       nextSeq = (room.seqCounter || 0) + 1;
     }
   }
-  room.seqCounter = nextSeq;
+  room.seqCounter = Math.max(room.seqCounter || 0, nextSeq);
 
-  // 2. Fetch latest shared messages from Redis before pushing to prevent lambda memory clobbering
+  // 2. Fetch latest shared messages from Redis and merge with in-memory messages (never wipe memory!)
   if (redis) {
     try {
       const stored = await redis.get<string | ChatMessage[]>(`room:${roomId}:messages`);
       if (stored) {
         const parsed = typeof stored === 'string' ? JSON.parse(stored) : stored;
-        if (Array.isArray(parsed)) {
-          room.messages = parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const merged = new Map<string, ChatMessage>();
+          for (const m of parsed) merged.set(m.id, m);
+          for (const m of room.messages) {
+            const ex = merged.get(m.id);
+            if (!ex || (m.status === 'seen' && ex.status !== 'seen')) {
+              merged.set(m.id, m);
+            }
+          }
+          room.messages = Array.from(merged.values());
         }
       }
     } catch {
@@ -488,15 +467,23 @@ export function getRoomMessages(roomId: string): ChatMessage[] {
 }
 
 export async function getRoomMessagesAsync(roomId: string): Promise<ChatMessage[]> {
+  const room = getOrCreateRoom(roomId);
   const redis = getRedisClient();
   if (redis) {
     try {
       const data = await redis.get<string | ChatMessage[]>(`room:${roomId}:messages`);
       if (data) {
         const parsed = typeof data === 'string' ? JSON.parse(data) : data;
-        if (Array.isArray(parsed)) {
-          const room = getOrCreateRoom(roomId);
-          room.messages = parsed
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const merged = new Map<string, ChatMessage>();
+          for (const m of parsed) merged.set(m.id, m);
+          for (const m of room.messages) {
+            const ex = merged.get(m.id);
+            if (!ex || (m.status === 'seen' && ex.status !== 'seen')) {
+              merged.set(m.id, m);
+            }
+          }
+          room.messages = Array.from(merged.values())
             .sort((a: ChatMessage, b: ChatMessage) => {
               if (a.seq && b.seq && a.seq !== b.seq) return a.seq - b.seq;
               return a.timestamp - b.timestamp;

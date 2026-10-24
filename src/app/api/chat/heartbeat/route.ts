@@ -8,20 +8,7 @@ export async function POST(req: NextRequest) {
     const { roomId = 'default-room', senderId } = body;
 
     if (senderId) {
-      let clientCount = recordAuthorHeartbeat(roomId, senderId);
-
-      const redis = getRedisClient();
-      if (redis) {
-        try {
-          const keys = await redis.keys(`room:${roomId}:author:*`);
-          if (Array.isArray(keys) && keys.length > 0) {
-            clientCount = Math.min(2, Math.max(1, keys.length));
-          }
-        } catch {
-          // fallback
-        }
-      }
-
+      const clientCount = recordAuthorHeartbeat(roomId, senderId);
       return NextResponse.json({ success: true, clientCount });
     }
 
