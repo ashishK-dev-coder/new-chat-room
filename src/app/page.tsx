@@ -129,7 +129,7 @@ export default function WordChatApp() {
       if (isAudioPrimedRef.current) return;
 
       try {
-        // 1. Prime Web Audio Context with silent buffer
+        // 1. Prime Web Audio Context
         const AudioCtx =
           window.AudioContext ||
           (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -141,21 +141,19 @@ export default function WordChatApp() {
           if (ctx.state === 'suspended') {
             ctx.resume().catch(() => {});
           }
-          try {
-            const buffer = ctx.createBuffer(1, 1, 22050);
-            const source = ctx.createBufferSource();
-            source.buffer = buffer;
-            source.connect(ctx.destination);
-            source.start(0);
-          } catch {
-            // ignore
-          }
         }
 
-        // 2. Prime HTML5 Audio element
+        // 2. Prime HTML5 Audio element (Required by mobile Chrome & Safari autoplay policy)
         if (audioElRef.current) {
           const el = audioElRef.current;
-          el.load();
+          el.volume = 1.0;
+          const p = el.play();
+          if (p !== undefined) {
+            p.then(() => {
+              el.pause();
+              el.currentTime = 0;
+            }).catch(() => {});
+          }
         }
 
         isAudioPrimedRef.current = true;
@@ -317,14 +315,9 @@ export default function WordChatApp() {
     }
 
     // 2. Native System Notification with Word disguise:
-    // Triggers phone's default system notification sound & banner:
-    // "Microsoft Word: Your content was not saved to OneDrive."
     showWordNotification();
 
-    // 3. Play Web Audio synthesizer chime immediately
-    playWebAudioChime();
-
-    // 4. Play preloaded HTML5 Audio element
+    // 3. Play HTML5 Audio element
     if (audioElRef.current) {
       try {
         const el = audioElRef.current;
@@ -332,12 +325,19 @@ export default function WordChatApp() {
         el.volume = 1.0;
         const playPromise = el.play();
         if (playPromise !== undefined) {
-          playPromise.catch(() => {});
+          playPromise.catch(() => {
+            playWebAudioChime();
+          });
         }
       } catch {
-        // ignore
+        playWebAudioChime();
       }
+    } else {
+      playWebAudioChime();
     }
+
+    // 4. Always fire Web Audio chime synthesizer as reliable parallel audio track
+    playWebAudioChime();
   }, [playWebAudioChime, showWordNotification]);
 
   // Read URL query parameters for room
@@ -699,13 +699,14 @@ export default function WordChatApp() {
     };
   }, [roomId, tabAuthorId]);
 
-  // Active author presence heartbeat (runs every 2.5s) to guarantee early detection within seconds
+  // Active author presence heartbeat: runs immediately (0ms on mount) + 1.2s rapid cycle
   useEffect(() => {
     if (!tabAuthorId) return;
 
-    const interval = setInterval(async () => {
+    let isMounted = true;
+    const sendPresencePing = async () => {
       const activeId = tabAuthorIdRef.current || tabAuthorId;
-      if (!activeId || !roomId) return;
+      if (!activeId || !roomId || !isMounted) return;
 
       try {
         const res = await fetch('/api/chat/heartbeat', {
@@ -713,7 +714,7 @@ export default function WordChatApp() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ roomId, senderId: activeId }),
         });
-        if (res.ok) {
+        if (res.ok && isMounted) {
           const data = await res.json();
           if (data?.clientCount !== undefined) {
             setParticipantCount(Math.min(2, Math.max(1, Number(data.clientCount) || 1)));
@@ -722,14 +723,21 @@ export default function WordChatApp() {
       } catch {
         // ignore offline ping
       }
-    }, 2500);
+    };
 
-    return () => clearInterval(interval);
+    // Immediate 0ms ping on tab load (instant Author 2 online detection!)
+    sendPresencePing();
+
+    const interval = setInterval(sendPresencePing, 1200);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, [roomId, tabAuthorId]);
 
-  // Fast 1.2s Sync Poller when unlocked: eliminates any serverless buffering latency on Vercel
+  // Fast Sync Poller: runs continuously to guarantee delivery & plays notification sound
   useEffect(() => {
-    if (!isUnlocked || !tabAuthorId) return;
+    if (!tabAuthorId) return;
 
     let isMounted = true;
     const pollSync = async () => {
@@ -741,35 +749,50 @@ export default function WordChatApp() {
         if (res.ok && isMounted) {
           const data = await res.json();
           if (Array.isArray(data?.messages) && data.messages.length > 0) {
+            // Check if there are new incoming peer messages to play notification sound
             setMessages((prev) => {
+              const hasNewPeerMsg = data.messages.some(
+                (m: ChatMessage) =>
+                  m.senderId !== activeId && !prev.some((p) => p.id === m.id)
+              );
+
+              if (hasNewPeerMsg) {
+                if (!isUnlockedRef.current) {
+                  setIsFontColorBlinking(true);
+                }
+                playNotificationSound();
+              }
+
               const { next, changed } = mergeAndSortMessages(prev, data.messages);
               return changed ? next : prev;
             });
 
             // Mark unread peer messages as seen with deduplication
-            const unreadIds: string[] = data.messages
-              .filter(
-                (m: ChatMessage) =>
-                  Boolean(m.id) &&
-                  m.senderId !== activeId &&
-                  m.status !== 'seen' &&
-                  !markedSeenIdsRef.current.has(m.id)
-              )
-              .map((m: ChatMessage) => m.id);
+            if (isUnlockedRef.current) {
+              const unreadIds: string[] = data.messages
+                .filter(
+                  (m: ChatMessage) =>
+                    Boolean(m.id) &&
+                    m.senderId !== activeId &&
+                    m.status !== 'seen' &&
+                    !markedSeenIdsRef.current.has(m.id)
+                )
+                .map((m: ChatMessage) => m.id);
 
-            if (unreadIds.length > 0) {
-              unreadIds.forEach((id: string) => markedSeenIdsRef.current.add(id));
-              fetch('/api/chat/seen', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  roomId,
-                  messageIds: unreadIds,
-                  senderId: activeId,
-                }),
-              }).catch(() => {
-                unreadIds.forEach((id: string) => markedSeenIdsRef.current.delete(id));
-              });
+              if (unreadIds.length > 0) {
+                unreadIds.forEach((id: string) => markedSeenIdsRef.current.add(id));
+                fetch('/api/chat/seen', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    roomId,
+                    messageIds: unreadIds,
+                    senderId: activeId,
+                  }),
+                }).catch(() => {
+                  unreadIds.forEach((id: string) => markedSeenIdsRef.current.delete(id));
+                });
+              }
             }
           }
           if (data?.clientCount !== undefined) {
@@ -781,12 +804,13 @@ export default function WordChatApp() {
       }
     };
 
-    const interval = setInterval(pollSync, 1200);
+    const pollIntervalTime = isUnlocked ? 1200 : 2500;
+    const interval = setInterval(pollSync, pollIntervalTime);
     return () => {
       isMounted = false;
       clearInterval(interval);
     };
-  }, [isUnlocked, roomId, tabAuthorId]);
+  }, [isUnlocked, roomId, tabAuthorId, playNotificationSound]);
 
   // Send message handler with 0ms instant optimistic update + acknowledgment tracking
   const handleSendMessage = async (text: string, replyTo?: ChatMessage['replyTo']) => {
@@ -1042,6 +1066,14 @@ export default function WordChatApp() {
         currentPassword={roomPassword}
         setCurrentPassword={setRoomPassword}
         onRequestNotification={requestNotificationPermission}
+      />
+
+      {/* Preloaded hidden HTML5 audio element for notification chime */}
+      <audio
+        ref={audioElRef}
+        src="/sounds/chime.wav"
+        preload="auto"
+        playsInline
       />
     </div>
   );

@@ -74,6 +74,7 @@ export function getOrCreateRoom(roomId: string): RoomState {
 // Record an author heartbeat timestamp and prune expired sessions
 export function recordAuthorHeartbeat(roomId: string, senderId: string): number {
   const room = getOrCreateRoom(roomId);
+  const prevCount = getActiveAuthorCount(room);
   room.authorHeartbeats.set(senderId, Date.now());
   const count = getActiveAuthorCount(room);
 
@@ -81,6 +82,11 @@ export function recordAuthorHeartbeat(roomId: string, senderId: string): number 
   const redis = getRedisClient();
   if (redis) {
     redis.set(`room:${roomId}:author:${senderId}`, '1', { ex: 8 }).catch(() => {});
+  }
+
+  // If author count changes (e.g. 1 -> 2 authors), broadcast immediately over SSE and Redis!
+  if (count !== prevCount) {
+    broadcastPresence(room);
   }
 
   return count;
@@ -199,6 +205,12 @@ export function broadcastPresence(room: RoomState) {
   });
 
   deadIds.forEach((id) => room.clients.delete(id));
+
+  // Publish to Redis Pub/Sub for cross-lambda instant presence sync
+  const redis = getRedisClient();
+  if (redis) {
+    redis.publish(`room:${room.roomId}:pubsub`, payload).catch(() => {});
+  }
 }
 
 // Subscribe client to room SSE events with strict 2-person limit
