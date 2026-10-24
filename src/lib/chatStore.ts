@@ -3,6 +3,7 @@ import { getRedisClient } from './redis';
 // Ephemeral store for strictly 2-person real-time chat with optional Upstash Redis Pub/Sub support
 export interface ChatMessage {
   id: string;
+  seq?: number;
   senderId: string;
   senderName: string;
   text: string;
@@ -27,6 +28,7 @@ export interface RoomState {
   messages: ChatMessage[];
   clients: Map<string, ClientSubscriber>; // connectionId -> subscriber
   authorHeartbeats: Map<string, number>; // senderId -> lastTimestamp
+  seqCounter?: number;
 }
 
 // Global variable across hot reloads in development
@@ -40,7 +42,7 @@ if (process.env.NODE_ENV !== 'production') {
   global.__wordChatRooms = rooms;
 }
 
-const MAX_MESSAGES = 5; // strictly maintain at most 5 messages (oldest automatically pruned and removed)
+const MAX_MESSAGES = 4; // strictly maintain at most 4 messages (oldest automatically pruned and removed)
 const MAX_AUTHORS = 2; // strictly 2-person chat room
 const HEARTBEAT_TIMEOUT_MS = 6000; // 6 seconds threshold for dead author detection
 
@@ -261,8 +263,8 @@ export function subscribeToRoom(
   };
 }
 
-// Add message with strict 4-message ceiling and 2-person room enforcement
-export function addMessageToRoom(
+// Add message with strict 4-message ceiling, atomic seq counter, and 2-person room enforcement
+export async function addMessageToRoom(
   roomId: string,
   message: {
     id?: string;
@@ -276,7 +278,7 @@ export function addMessageToRoom(
       text: string;
     };
   }
-): { success: boolean; messages: ChatMessage[]; message?: ChatMessage; error?: string } {
+): Promise<{ success: boolean; messages: ChatMessage[]; message?: ChatMessage; error?: string }> {
   const room = getOrCreateRoom(roomId);
 
   // Enforce 2-person limit
@@ -288,8 +290,37 @@ export function addMessageToRoom(
     };
   }
 
+  const redis = getRedisClient();
+
+  // 1. Monotonically increasing atomic sequence counter for 100% deterministic ordering
+  let nextSeq = (room.seqCounter || 0) + 1;
+  if (redis) {
+    try {
+      nextSeq = await redis.incr(`room:${roomId}:seq`);
+    } catch {
+      nextSeq = (room.seqCounter || 0) + 1;
+    }
+  }
+  room.seqCounter = nextSeq;
+
+  // 2. Fetch latest shared messages from Redis before pushing to prevent lambda memory clobbering
+  if (redis) {
+    try {
+      const stored = await redis.get<string | ChatMessage[]>(`room:${roomId}:messages`);
+      if (stored) {
+        const parsed = typeof stored === 'string' ? JSON.parse(stored) : stored;
+        if (Array.isArray(parsed)) {
+          room.messages = parsed;
+        }
+      }
+    } catch {
+      // fallback to memory
+    }
+  }
+
   const newMsg: ChatMessage = {
     id: message.id || `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+    seq: nextSeq,
     senderId: message.senderId,
     senderName: message.senderName || 'Anonymous',
     text: message.text,
@@ -298,12 +329,21 @@ export function addMessageToRoom(
     replyTo: message.replyTo,
   };
 
-  room.messages.push(newMsg);
-
-  // Maintain strictly at most 4 messages (oldest removed)
-  if (room.messages.length > MAX_MESSAGES) {
-    room.messages = room.messages.slice(-MAX_MESSAGES);
+  // Deduplicate and push
+  const exists = room.messages.some((m) => m.id === newMsg.id);
+  if (!exists) {
+    room.messages.push(newMsg);
+  } else {
+    room.messages = room.messages.map((m) => (m.id === newMsg.id ? { ...m, ...newMsg } : m));
   }
+
+  // Sort deterministically by seq ascending (and timestamp as fallback), strictly keeping last 4
+  room.messages = room.messages
+    .sort((a, b) => {
+      if (a.seq && b.seq && a.seq !== b.seq) return a.seq - b.seq;
+      return a.timestamp - b.timestamp;
+    })
+    .slice(-MAX_MESSAGES);
 
   const authorCount = getActiveAuthorCount(room);
 
@@ -329,8 +369,7 @@ export function addMessageToRoom(
 
   deadIds.forEach((id) => room.clients.delete(id));
 
-  // Sync to Redis Pub/Sub if configured
-  const redis = getRedisClient();
+  // Sync to Redis Pub/Sub and persistent cache
   if (redis) {
     redis.set(`room:${roomId}:messages`, JSON.stringify(room.messages), { ex: 86400 }).catch(() => {});
     redis.publish(`room:${roomId}:pubsub`, payload).catch(() => {});
@@ -349,8 +388,22 @@ export async function markMessagesAsSeen(
   const now = Date.now();
   const seenIds: string[] = [];
 
+  const redis = getRedisClient();
+  if (redis) {
+    try {
+      const stored = await redis.get<string | ChatMessage[]>(`room:${roomId}:messages`);
+      if (stored) {
+        const parsed = typeof stored === 'string' ? JSON.parse(stored) : stored;
+        if (Array.isArray(parsed)) {
+          room.messages = parsed;
+        }
+      }
+    } catch {
+      // fallback
+    }
+  }
+
   room.messages = room.messages.map((m) => {
-    // If the message is from the peer author and in the messageIds list
     if (messageIds.includes(m.id) && m.senderId !== seenBy && m.status !== 'seen') {
       seenIds.push(m.id);
       return {
@@ -381,7 +434,6 @@ export async function markMessagesAsSeen(
     });
     deadIds.forEach((id) => room.clients.delete(id));
 
-    const redis = getRedisClient();
     if (redis) {
       redis.set(`room:${roomId}:messages`, JSON.stringify(room.messages), { ex: 86400 }).catch(() => {});
       redis.publish(`room:${roomId}:pubsub`, payload).catch(() => {});
@@ -394,6 +446,7 @@ export async function markMessagesAsSeen(
 export function clearRoomMessages(roomId: string, senderId?: string): { success: boolean } {
   const room = getOrCreateRoom(roomId);
   room.messages = [];
+  room.seqCounter = 0;
 
   const payload = JSON.stringify({
     type: 'clear',
@@ -416,6 +469,7 @@ export function clearRoomMessages(roomId: string, senderId?: string): { success:
   const redis = getRedisClient();
   if (redis) {
     redis.del(`room:${roomId}:messages`).catch(() => {});
+    redis.del(`room:${roomId}:seq`).catch(() => {});
     redis.publish(`room:${roomId}:pubsub`, payload).catch(() => {});
   }
 
@@ -425,7 +479,12 @@ export function clearRoomMessages(roomId: string, senderId?: string): { success:
 export function getRoomMessages(roomId: string): ChatMessage[] {
   const room = rooms.get(roomId);
   if (!room) return [];
-  return [...room.messages].sort((a, b) => a.timestamp - b.timestamp).slice(-MAX_MESSAGES);
+  return [...room.messages]
+    .sort((a, b) => {
+      if (a.seq && b.seq && a.seq !== b.seq) return a.seq - b.seq;
+      return a.timestamp - b.timestamp;
+    })
+    .slice(-MAX_MESSAGES);
 }
 
 export async function getRoomMessagesAsync(roomId: string): Promise<ChatMessage[]> {
@@ -437,7 +496,12 @@ export async function getRoomMessagesAsync(roomId: string): Promise<ChatMessage[
         const parsed = typeof data === 'string' ? JSON.parse(data) : data;
         if (Array.isArray(parsed)) {
           const room = getOrCreateRoom(roomId);
-          room.messages = parsed.sort((a: ChatMessage, b: ChatMessage) => a.timestamp - b.timestamp).slice(-MAX_MESSAGES);
+          room.messages = parsed
+            .sort((a: ChatMessage, b: ChatMessage) => {
+              if (a.seq && b.seq && a.seq !== b.seq) return a.seq - b.seq;
+              return a.timestamp - b.timestamp;
+            })
+            .slice(-MAX_MESSAGES);
           return room.messages;
         }
       }

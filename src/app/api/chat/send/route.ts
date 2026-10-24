@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized: Invalid password' }, { status: 401 });
     }
 
-    const result = addMessageToRoom(roomId, {
+    const result = await addMessageToRoom(roomId, {
       id,
       senderId: senderId || 'anonymous',
       senderName: senderName || 'User',

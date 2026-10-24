@@ -11,7 +11,7 @@ import { WordStatusBar } from '@/components/WordStatusBar';
 import { SettingsModal } from '@/components/SettingsModal';
 import { ChatMessage } from '@/lib/chatStore';
 
-// Deterministic message sorting (by timestamp ascending), deduplication, and last 5 rolling window
+// Deterministic message sorting (by monotonic seq first, timestamp fallback), deduplication, and strictly last 4 messages
 function mergeAndSortMessages(
   prev: ChatMessage[],
   incoming: ChatMessage[]
@@ -38,17 +38,35 @@ function mergeAndSortMessages(
       const currentRank = statusRank[m.status || 'delivered'] ?? 1;
       const existingRank = statusRank[existing.status || 'delivered'] ?? 1;
 
-      if (currentRank > existingRank || existing.status !== m.status || existing.text !== m.text) {
-        map.set(m.id, { ...existing, ...m, status: currentRank >= existingRank ? m.status : existing.status });
+      if (
+        currentRank > existingRank ||
+        existing.status !== m.status ||
+        existing.text !== m.text ||
+        (!existing.seq && m.seq) ||
+        (!existing.seenAt && m.seenAt)
+      ) {
+        map.set(m.id, {
+          ...existing,
+          ...m,
+          status: currentRank >= existingRank ? m.status : existing.status,
+          seq: m.seq || existing.seq,
+        });
         changed = true;
       }
     }
   }
 
-  // Strictly sort ascending by timestamp so message sequence is 100% deterministic
+  // Strictly sort: confirmed messages by monotonic seq ascending; pending optimistic at the end
   const sorted = Array.from(map.values())
-    .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
-    .slice(-5);
+    .sort((a, b) => {
+      if (a.seq && b.seq && a.seq !== b.seq) {
+        return a.seq - b.seq;
+      }
+      if (a.seq && !b.seq) return -1;
+      if (!a.seq && b.seq) return 1;
+      return (a.timestamp || 0) - (b.timestamp || 0);
+    })
+    .slice(-4); // Strictly maintain last 4 messages across both authors
 
   if (sorted.length !== prev.length) {
     changed = true;
@@ -409,7 +427,7 @@ export default function WordChatApp() {
       if (cached) {
         const parsed = JSON.parse(cached);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          setMessages(parsed.slice(-5));
+          setMessages(parsed.slice(-4));
         }
       }
     } catch {
@@ -804,7 +822,7 @@ export default function WordChatApp() {
       }
     };
 
-    const pollIntervalTime = isUnlocked ? 1200 : 2500;
+    const pollIntervalTime = isUnlocked ? 600 : 2000;
     const interval = setInterval(pollSync, pollIntervalTime);
     return () => {
       isMounted = false;
@@ -868,12 +886,20 @@ export default function WordChatApp() {
           )
         );
       } else {
-        // Confirmed & acknowledged by server!
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === messageId ? { ...m, status: 'delivered' } : m
-          )
-        );
+        // Confirmed & acknowledged by server! Merge with server-confirmed seq number
+        const data = await res.json().catch(() => ({}));
+        if (data?.message) {
+          setMessages((prev) => {
+            const { next } = mergeAndSortMessages(prev, [data.message]);
+            return next;
+          });
+        } else {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === messageId ? { ...m, status: 'delivered' } : m
+            )
+          );
+        }
       }
     } catch (err) {
       console.error('Network error sending message:', err);

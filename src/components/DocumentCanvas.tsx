@@ -210,9 +210,16 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   }, [isUnlocked]);
 
   // When logged out (!isUnlocked), NO messages are shown on the UI!
-  // Strictly maintain at most 5 messages in ascending chronological order
+  // Strictly maintain at most 4 messages in ascending sequence/chronological order
   const displayedMessages = isUnlocked
-    ? [...messages].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0)).slice(-5)
+    ? [...messages]
+        .sort((a, b) => {
+          if (a.seq && b.seq && a.seq !== b.seq) return a.seq - b.seq;
+          if (a.seq && !b.seq) return -1;
+          if (!a.seq && b.seq) return 1;
+          return (a.timestamp || 0) - (b.timestamp || 0);
+        })
+        .slice(-4)
     : [];
 
   // Clicking document canvas does NOT open password popup (only focuses if already unlocked)
@@ -399,14 +406,14 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                   <span className={`text-[8.5pt] font-mono select-none hidden sm:inline ${
                     darkMode ? 'text-[#34d399]' : 'text-[#107c41]'
                   }`}>
-                    Live Working Clauses ({displayedMessages.length}/5)
+                    Live Working Clauses ({displayedMessages.length}/4)
                   </span>
                 )}
               </div>
 
               {isUnlocked ? (
-                <div className="space-y-2 pl-1 sm:pl-3 w-full min-w-0">
-                  {/* Sequential List of Active Clauses (Strictly sorted by timestamp ascending) */}
+                <div className="space-y-2.5 w-full min-w-0 pt-1">
+                  {/* Distinct sequential paragraphs: Left side = Other Author, Right side = Self Author */}
                   {displayedMessages.map((msg, idx) => {
                     const isSelf = msg.senderId === currentUserId;
                     const clauseNum = `Clause 5.${idx + 1}`;
@@ -414,42 +421,153 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                     return (
                       <div
                         key={msg.id}
-                        className={`group relative py-1.5 px-2.5 rounded-xs transition-colors w-full min-w-0 ${
-                          darkMode
-                            ? isSelf
-                              ? 'border-l-2 border-[#4ba3f4] bg-[#2a2d34]'
-                              : 'border-l-2 border-[#34d399] bg-[#2a2d34]'
-                            : isSelf
-                            ? 'border-l-2 border-[#0078d4] bg-[#f8fafc]'
-                            : 'border-l-2 border-[#107c41] bg-[#f8fafc]'
-                        }`}
+                        className={`flex w-full min-w-0 ${isSelf ? 'justify-end' : 'justify-start'}`}
                       >
-                        {/* Quoted / Tagged reference if replying to an earlier clause */}
-                        {msg.replyTo && (
-                          <div className={`flex items-center space-x-1.5 text-[8pt] sm:text-[8.5pt] mb-1 pl-1.5 border-l-2 select-none opacity-85 min-w-0 max-w-full overflow-hidden ${
-                            darkMode
-                              ? 'border-[#4ba3f4]/70 text-[#93c5fd]'
-                              : 'border-[#0078d4]/70 text-[#0284c7]'
-                          }`}>
-                            <CornerUpLeft className="w-2.5 h-2.5 shrink-0" />
-                            <span className="font-semibold shrink-0">
-                              {msg.replyTo.senderName}:
-                            </span>
-                            <span className="truncate italic flex-1 min-w-0">
-                              "{msg.replyTo.text}"
-                            </span>
-                          </div>
-                        )}
+                        <div
+                          className={`group relative py-2 px-3 rounded-xs transition-all w-full max-w-[94%] sm:max-w-[84%] ${
+                            isSelf
+                              ? darkMode
+                                ? 'border-r-3 border-[#4ba3f4] bg-[#1a2333] text-[#f3f4f6] shadow-xs'
+                                : 'border-r-3 border-[#0078d4] bg-[#f0f6ff] text-[#111827] shadow-xs'
+                              : darkMode
+                              ? 'border-l-3 border-[#34d399] bg-[#1a2722] text-[#f3f4f6] shadow-xs'
+                              : 'border-l-3 border-[#107c41] bg-[#f2f8f4] text-[#111827] shadow-xs'
+                          }`}
+                        >
+                          {/* Quoted / Tagged reference if replying to an earlier clause */}
+                          {msg.replyTo && (
+                            <div className={`flex items-center space-x-1.5 text-[8pt] sm:text-[8.5pt] mb-1.5 pl-2 py-0.5 border-l-2 select-none opacity-85 min-w-0 max-w-full overflow-hidden ${
+                              darkMode
+                                ? isSelf
+                                  ? 'border-[#4ba3f4]/70 text-[#93c5fd] bg-[#4ba3f4]/10'
+                                  : 'border-[#34d399]/70 text-[#a7f3d0] bg-[#34d399]/10'
+                                : isSelf
+                                ? 'border-[#0078d4]/70 text-[#0284c7] bg-[#0078d4]/5'
+                                : 'border-[#107c41]/70 text-[#15803d] bg-[#107c41]/5'
+                            }`}>
+                              <CornerUpLeft className="w-2.5 h-2.5 shrink-0" />
+                              <span className="font-semibold shrink-0">
+                                {msg.replyTo.senderName}:
+                              </span>
+                              <span className="truncate italic flex-1 min-w-0">
+                                "{msg.replyTo.text}"
+                              </span>
+                            </div>
+                          )}
 
-                        <div className={`flex flex-col sm:flex-row sm:items-start justify-between gap-1 sm:gap-2 text-[10pt] sm:text-[10.5pt] leading-relaxed select-text w-full min-w-0 ${
-                          darkMode ? 'text-[#f3f4f6]' : 'text-[#111827]'
-                        }`}>
-                          <div className="flex-1 min-w-0 break-words pr-0.5">
-                            <span className={`font-semibold mr-1.5 select-none ${
-                              darkMode ? 'text-[#9ca3af]' : 'text-[#4b5563]'
+                          {/* Clause Paragraph Header: Author Tag on left, Timestamp & Status on right */}
+                          <div className="flex items-center justify-between gap-1 mb-1 select-none">
+                            <span className={`font-semibold text-[8.5pt] sm:text-[9.5pt] tracking-tight ${
+                              isSelf
+                                ? darkMode
+                                  ? 'text-[#60a5fa]'
+                                  : 'text-[#0078d4]'
+                                : darkMode
+                                ? 'text-[#34d399]'
+                                : 'text-[#107c41]'
                             }`}>
                               • {clauseNum} [{isSelf ? 'You' : 'Author'}]:
                             </span>
+
+                            <div className="flex items-center space-x-1.5 shrink-0">
+                              {/* High-precision timestamp */}
+                              {msg.timestamp && (
+                                <span className={`font-mono text-[6.5pt] sm:text-[7.5pt] opacity-75 ${
+                                  darkMode ? 'text-[#9ca3af]' : 'text-[#605e5c]'
+                                }`}>
+                                  {formatMessageTime(msg.timestamp)}
+                                </span>
+                              )}
+
+                              {/* Single tick for sent, Double blue tick for seen (shown on self messages) */}
+                              {isSelf && (
+                                <>
+                                  {msg.status === 'pending' ? (
+                                    <span
+                                      className={`inline-flex items-center space-x-0.5 font-mono px-1 py-0.5 rounded tracking-tight transition-all ${
+                                        darkMode
+                                          ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                                          : 'bg-amber-50 text-amber-700 border border-amber-200'
+                                      }`}
+                                      title="Sending clause... Going"
+                                    >
+                                      <Clock className="w-2.5 h-2.5 animate-spin" style={{ animationDuration: '2.5s' }} />
+                                      <span className="text-[6.5pt] sm:text-[7pt]">going...</span>
+                                    </span>
+                                  ) : msg.status === 'failed' ? (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        onSendMessage(msg.text, msg.replyTo);
+                                      }}
+                                      className={`inline-flex items-center space-x-1 px-1.5 py-0.5 rounded cursor-pointer transition-all ${
+                                        darkMode
+                                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 hover:bg-rose-500/30'
+                                          : 'bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100'
+                                      }`}
+                                      title="Delivery failed. Click to retry"
+                                    >
+                                      <AlertCircle className="w-2.5 h-2.5" />
+                                      <span className="text-[6.5pt] sm:text-[7pt]">failed (retry)</span>
+                                    </button>
+                                  ) : msg.status === 'seen' ? (
+                                    <span
+                                      className={`inline-flex items-center space-x-0.5 px-1 py-0.5 rounded font-medium transition-all ${
+                                        darkMode
+                                          ? 'text-[#4ba3f4] bg-[#4ba3f4]/15 border border-[#4ba3f4]/30'
+                                          : 'text-[#0078d4] bg-[#f0f9ff] border border-[#0078d4]/30'
+                                      }`}
+                                      title="Seen by co-author"
+                                    >
+                                      <CheckCheck className="w-3 h-3 stroke-[2.4]" />
+                                      <span className="font-semibold text-[6.5pt] sm:text-[7pt] tracking-tight">seen</span>
+                                    </span>
+                                  ) : (
+                                    <span
+                                      className={`inline-flex items-center space-x-0.5 px-1 py-0.5 rounded font-medium transition-all ${
+                                        darkMode
+                                          ? 'text-[#9ca3af] bg-white/5 border border-white/10'
+                                          : 'text-[#64748b] bg-slate-50 border border-slate-200'
+                                      }`}
+                                      title="Sent & delivered to document room"
+                                    >
+                                      <Check className="w-2.5 h-2.5 stroke-[2.2]" />
+                                      <span className="text-[6.5pt] sm:text-[7pt] tracking-tight">sent</span>
+                                    </span>
+                                  )}
+                                </>
+                              )}
+
+                              {/* Backward reply arrow to tag this message */}
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setTaggedMessage({
+                                    id: msg.id,
+                                    senderName: isSelf ? 'You' : 'Author',
+                                    text: msg.text,
+                                    prefix: clauseNum,
+                                  });
+                                  setTimeout(() => inputRef.current?.focus(), 10);
+                                }}
+                                title="Tag / Reply to this clause"
+                                className={`opacity-40 hover:opacity-100 group-hover:opacity-100 transition-opacity p-0.5 rounded cursor-pointer shrink-0 ${
+                                  darkMode
+                                    ? 'hover:bg-white/10 text-white/70 hover:text-[#4ba3f4]'
+                                    : 'hover:bg-black/5 text-[#64748b] hover:text-[#0078d4]'
+                                }`}
+                              >
+                                <CornerUpLeft className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Clause Paragraph Body */}
+                          <div className={`text-[10pt] sm:text-[10.5pt] leading-relaxed select-text break-words ${
+                            darkMode ? 'text-[#f3f4f6]' : 'text-[#111827]'
+                          }`}>
                             <span
                               className={`break-words ${
                                 fontSettings.bold ? 'font-bold' : ''
@@ -459,101 +577,6 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                             >
                               {msg.text}
                             </span>
-                          </div>
-
-                          <div className="flex items-center justify-end shrink-0 space-x-1.5 self-end sm:self-center pt-0.5 sm:pt-0">
-                            {/* Message Time and Status Indicator */}
-                            <div className="flex items-center space-x-1 select-none text-[7pt] sm:text-[7.5pt] tracking-tight">
-                              {/* High-precision timestamp (e.g. 10:45:00.128) */}
-                              {msg.timestamp && (
-                                <span className={`font-mono text-[6.5pt] sm:text-[7.5pt] mr-0.5 opacity-80 ${
-                                  darkMode ? 'text-[#9ca3af]' : 'text-[#605e5c]'
-                                }`}>
-                                  {formatMessageTime(msg.timestamp)}
-                                </span>
-                              )}
-
-                              {/* Single tick for sent, Double blue tick for seen */}
-                              {msg.status === 'pending' ? (
-                                <span
-                                  className={`inline-flex items-center space-x-0.5 font-mono px-1 py-0.5 rounded tracking-tight transition-all ${
-                                    darkMode
-                                      ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
-                                      : 'bg-amber-50 text-amber-700 border border-amber-200'
-                                  }`}
-                                  title="Sending clause... Going"
-                                >
-                                  <Clock className="w-2.5 h-2.5 animate-spin" style={{ animationDuration: '2.5s' }} />
-                                  <span>going...</span>
-                                </span>
-                              ) : msg.status === 'failed' ? (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    onSendMessage(msg.text, msg.replyTo);
-                                  }}
-                                  className={`inline-flex items-center space-x-1 px-1.5 py-0.5 rounded cursor-pointer transition-all ${
-                                    darkMode
-                                      ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 hover:bg-rose-500/30'
-                                      : 'bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100'
-                                  }`}
-                                  title="Delivery failed. Click to retry"
-                                >
-                                  <AlertCircle className="w-2.5 h-2.5" />
-                                  <span>failed (retry)</span>
-                                </button>
-                              ) : msg.status === 'seen' || !isSelf ? (
-                                /* Double Tick: Seen by co-author */
-                                <span
-                                  className={`inline-flex items-center space-x-0.5 px-1 py-0.5 rounded font-medium transition-all ${
-                                    darkMode
-                                      ? 'text-[#4ba3f4] bg-[#4ba3f4]/15 border border-[#4ba3f4]/30'
-                                      : 'text-[#0078d4] bg-[#f0f9ff] border border-[#0078d4]/30'
-                                  }`}
-                                  title="Seen by co-author"
-                                >
-                                  <CheckCheck className="w-3 h-3 stroke-[2.4]" />
-                                  <span className="font-semibold text-[6.5pt] sm:text-[7pt] tracking-tight">seen</span>
-                                </span>
-                              ) : (
-                                /* Single Tick: Sent & delivered to server */
-                                <span
-                                  className={`inline-flex items-center space-x-0.5 px-1 py-0.5 rounded font-medium transition-all ${
-                                    darkMode
-                                      ? 'text-[#9ca3af] bg-white/5 border border-white/10'
-                                      : 'text-[#64748b] bg-slate-50 border border-slate-200'
-                                  }`}
-                                  title="Sent & delivered to document room"
-                                >
-                                  <Check className="w-2.5 h-2.5 stroke-[2.2]" />
-                                  <span className="text-[6.5pt] sm:text-[7pt] tracking-tight">sent</span>
-                                </span>
-                              )}
-                            </div>
-
-                            {/* Backward reply arrow to tag this message */}
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setTaggedMessage({
-                                  id: msg.id,
-                                  senderName: isSelf ? 'You' : 'Author',
-                                  text: msg.text,
-                                  prefix: clauseNum,
-                                });
-                                setTimeout(() => inputRef.current?.focus(), 10);
-                              }}
-                              title="Tag / Reply to this clause"
-                              className={`opacity-40 hover:opacity-100 group-hover:opacity-100 transition-opacity p-1 rounded cursor-pointer shrink-0 ${
-                                darkMode
-                                  ? 'hover:bg-white/10 text-white/70 hover:text-[#4ba3f4]'
-                                  : 'hover:bg-black/5 text-[#64748b] hover:text-[#0078d4]'
-                              }`}
-                            >
-                              <CornerUpLeft className="w-3 h-3" />
-                            </button>
                           </div>
                         </div>
                       </div>
