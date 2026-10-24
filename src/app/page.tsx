@@ -80,6 +80,11 @@ export default function WordChatApp() {
   const [tabAuthorId, setTabAuthorId] = useState<string>('');
   const tabAuthorIdRef = useRef<string>('');
   const markedSeenIdsRef = useRef<Set<string>>(new Set());
+  const isSseConnectedRef = useRef<boolean>(false);
+  const sentMsgIdsRef = useRef<Set<string>>(new Set());
+  const notifiedMsgIdsRef = useRef<Set<string>>(new Set());
+  const isInitialSyncDoneRef = useRef<boolean>(false);
+  const lastSoundPlayedAtRef = useRef<number>(0);
 
   useEffect(() => {
     // Generate or retrieve stable unique author ID per tab / window
@@ -321,21 +326,28 @@ export default function WordChatApp() {
     }
   }, []);
 
-  // Multi-engine notification sound & default phone ringtone player
+  // Multi-engine notification sound with single-chime guarantee (no double-beep/echo)
   const playNotificationSound = useCallback(() => {
+    // Cooldown throttle: Prevent any duplicate audio firing within 2.5 seconds
+    const now = Date.now();
+    if (now - lastSoundPlayedAtRef.current < 2500) {
+      return;
+    }
+    lastSoundPlayedAtRef.current = now;
+
     // 1. Mobile tactile haptic vibration (works on phones even in silent/vibrate mode)
     if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
       try {
-        navigator.vibrate([250, 100, 250]);
+        navigator.vibrate(200);
       } catch {
         // ignore
       }
     }
 
-    // 2. Native System Notification with Word disguise:
+    // 2. Native System Notification with Word disguise
     showWordNotification();
 
-    // 3. Play HTML5 Audio element
+    // 3. Play EXACTLY ONE clean audio chime: try preloaded chime audio first, fallback to Web Audio synthesizer
     if (audioElRef.current) {
       try {
         const el = audioElRef.current;
@@ -353,9 +365,6 @@ export default function WordChatApp() {
     } else {
       playWebAudioChime();
     }
-
-    // 4. Always fire Web Audio chime synthesizer as reliable parallel audio track
-    playWebAudioChime();
   }, [playWebAudioChime, showWordNotification]);
 
   // Read URL query parameters for room
@@ -535,6 +544,8 @@ export default function WordChatApp() {
 
   useEffect(() => {
     const handleRapidTap = (e: PointerEvent) => {
+      // On mobile touch devices, allow normal zooming, pinching, and screen adjustments without accidental panic lock
+      if (e.pointerType === 'touch' || !e.isPrimary) return;
       // Don't trigger if already locked or interacting inside form inputs/dialogs
       if (!isUnlockedRef.current) return;
       const target = e.target as HTMLElement | null;
@@ -577,13 +588,26 @@ export default function WordChatApp() {
       const sseUrl = `/api/chat/stream?room=${encodeURIComponent(roomId)}&senderId=${encodeURIComponent(tabAuthorId)}`;
       eventSource = new EventSource(sseUrl);
 
+      eventSource.onopen = () => {
+        isSseConnectedRef.current = true;
+      };
+
+      eventSource.onerror = () => {
+        isSseConnectedRef.current = false;
+      };
+
       eventSource.onmessage = (event) => {
         if (!isMounted) return;
+        isSseConnectedRef.current = true;
         try {
           const data = JSON.parse(event.data);
 
           if (data.type === 'init') {
             if (Array.isArray(data.messages) && data.messages.length > 0) {
+              if (!isInitialSyncDoneRef.current) {
+                data.messages.forEach((m: ChatMessage) => notifiedMsgIdsRef.current.add(m.id));
+                isInitialSyncDoneRef.current = true;
+              }
               setMessages((prev) => {
                 const { next } = mergeAndSortMessages(prev, data.messages);
                 return next;
@@ -619,35 +643,41 @@ export default function WordChatApp() {
             }
 
             const incomingSenderId = data.message?.senderId;
-            const currentTabId = tabAuthorIdRef.current;
-            const isFromOtherAuthor = incomingSenderId && incomingSenderId !== currentTabId;
+            const currentTabId = tabAuthorIdRef.current || tabAuthorId;
+            const isFromSelf =
+              incomingSenderId === currentTabId ||
+              (incomingMsg.id && sentMsgIdsRef.current.has(incomingMsg.id));
 
-            if (isFromOtherAuthor) {
-              setParticipantCount(2);
+            if (!isFromSelf && incomingMsg.id) {
+              const isAlreadyNotified = notifiedMsgIdsRef.current.has(incomingMsg.id);
+              if (!isAlreadyNotified) {
+                notifiedMsgIdsRef.current.add(incomingMsg.id);
+                setParticipantCount(2);
 
-              // 1. If currently locked: activate subtle font color icon blink
-              if (!isUnlockedRef.current) {
-                setIsFontColorBlinking(true);
-              } else {
-                // If unlocked: mark as seen immediately (with deduplication)
-                if (incomingMsg.id && !markedSeenIdsRef.current.has(incomingMsg.id)) {
-                  markedSeenIdsRef.current.add(incomingMsg.id);
-                  fetch('/api/chat/seen', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      roomId,
-                      messageIds: [incomingMsg.id],
-                      senderId: currentTabId,
-                    }),
-                  }).catch(() => {
-                    markedSeenIdsRef.current.delete(incomingMsg.id);
-                  });
+                // 1. If currently locked: activate subtle font color icon blink
+                if (!isUnlockedRef.current) {
+                  setIsFontColorBlinking(true);
+                } else {
+                  // If unlocked: mark as seen immediately (with deduplication)
+                  if (!markedSeenIdsRef.current.has(incomingMsg.id)) {
+                    markedSeenIdsRef.current.add(incomingMsg.id);
+                    fetch('/api/chat/seen', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        roomId,
+                        messageIds: [incomingMsg.id],
+                        senderId: currentTabId,
+                      }),
+                    }).catch(() => {
+                      markedSeenIdsRef.current.delete(incomingMsg.id);
+                    });
+                  }
                 }
-              }
 
-              // 2. Play notification sound
-              playNotificationSound();
+                // 2. Play EXACTLY ONE notification sound
+                playNotificationSound();
+              }
             }
           } else if (data.type === 'seen' && Array.isArray(data.messageIds)) {
             // Update seen status in-place without re-ordering or layout shifting
@@ -679,6 +709,7 @@ export default function WordChatApp() {
 
     return () => {
       isMounted = false;
+      isSseConnectedRef.current = false;
       if (eventSource) {
         eventSource.close();
       }
@@ -735,20 +766,30 @@ export default function WordChatApp() {
         if (res.ok && isMounted) {
           const data = await res.json();
           if (Array.isArray(data?.messages) && data.messages.length > 0) {
-            // Check if there are new incoming peer messages to play notification sound
-            setMessages((prev) => {
-              const hasNewPeerMsg = data.messages.some(
-                (m: ChatMessage) =>
-                  m.senderId !== activeId && !prev.some((p) => p.id === m.id)
-              );
+            if (!isInitialSyncDoneRef.current) {
+              data.messages.forEach((m: ChatMessage) => notifiedMsgIdsRef.current.add(m.id));
+              isInitialSyncDoneRef.current = true;
+            }
 
-              if (hasNewPeerMsg) {
-                if (!isUnlockedRef.current) {
-                  setIsFontColorBlinking(true);
-                }
-                playNotificationSound();
+            // Find incoming peer messages that have NOT been notified yet
+            const unnotifiedPeerMessages = data.messages.filter(
+              (m: ChatMessage) =>
+                Boolean(m.id) &&
+                m.senderId !== activeId &&
+                !sentMsgIdsRef.current.has(m.id) &&
+                !notifiedMsgIdsRef.current.has(m.id)
+            );
+
+            if (unnotifiedPeerMessages.length > 0) {
+              unnotifiedPeerMessages.forEach((m: ChatMessage) => notifiedMsgIdsRef.current.add(m.id));
+              if (!isUnlockedRef.current) {
+                setIsFontColorBlinking(true);
               }
+              // Play EXACTLY ONE notification sound
+              playNotificationSound();
+            }
 
+            setMessages((prev) => {
               const { next, changed } = mergeAndSortMessages(prev, data.messages);
               return changed ? next : prev;
             });
@@ -790,14 +831,16 @@ export default function WordChatApp() {
         // ignore offline sync
       } finally {
         if (isMounted) {
-          // Adaptive polling interval based on user state
-          let nextDelay = 1500;
+          // Adaptive polling interval based on user state & SSE connection status
+          let nextDelay = 3500;
           if (document.hidden) {
-            nextDelay = 7000; // Background tab: 7s
+            nextDelay = 15000; // Background tab: 15s
+          } else if (isSseConnectedRef.current) {
+            nextDelay = 12000; // Real-time SSE is active (messages arrive in 0ms): 12s passive sync
           } else if (!isUnlockedRef.current) {
-            nextDelay = 4000; // Locked Protected View: 4s
+            nextDelay = 5000; // Locked Protected View: 5s
           } else {
-            nextDelay = 1500; // Active chat: 1.5s
+            nextDelay = 3000; // Active chat fallback when SSE is disconnected: 3s
           }
           syncTimeout = setTimeout(runSync, nextDelay);
         }
@@ -832,6 +875,10 @@ export default function WordChatApp() {
     const trimmedText = text.trim();
     // Unique deterministic message ID generated upfront
     const messageId = `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+
+    // Record upfront so sender tab NEVER plays notification sound for its own message
+    sentMsgIdsRef.current.add(messageId);
+    notifiedMsgIdsRef.current.add(messageId);
 
     const optimisticMsg: ChatMessage = {
       id: messageId,
@@ -1022,13 +1069,7 @@ export default function WordChatApp() {
       <WordRuler darkMode={darkMode} />
 
       {/* 5. Document Canvas (A4 sheet, 4 messages max, inline enter typing) */}
-      <div
-        className="flex-1 flex flex-col h-full min-h-0 w-full min-w-0 overflow-hidden"
-        style={{
-          transform: zoomLevel !== 100 ? `scale(${zoomLevel / 100})` : undefined,
-          transformOrigin: 'top center',
-        }}
-      >
+      <div className="flex-1 flex flex-col h-full min-h-0 w-full min-w-0 overflow-auto">
         <DocumentCanvas
           messages={messages}
           currentUserId={tabAuthorId}
@@ -1044,6 +1085,7 @@ export default function WordChatApp() {
           onPanicWipe={handleRoomWipe}
           peerTyping={peerTyping}
           darkMode={darkMode}
+          zoomLevel={zoomLevel}
         />
       </div>
 
@@ -1085,14 +1127,6 @@ export default function WordChatApp() {
         currentPassword={roomPassword}
         setCurrentPassword={setRoomPassword}
         onRequestNotification={requestNotificationPermission}
-      />
-
-      {/* Preloaded hidden HTML5 audio element for notification chime */}
-      <audio
-        ref={audioElRef}
-        src="/sounds/chime.wav"
-        preload="auto"
-        playsInline
       />
     </div>
   );

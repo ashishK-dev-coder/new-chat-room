@@ -47,7 +47,7 @@
   box-sizing: border-box;
   word-break: break-word;
   overflow-wrap: break-word;
-  touch-action: pan-y;
+  touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
 }
 

@@ -64,17 +64,17 @@ export const WordStatusBar: React.FC<WordStatusBarProps> = ({
         </div>
       </div>
 
-      {/* Right items: Focus, Views, Zoom Slider (desktop/tablet) */}
-      <div className="hidden sm:flex items-center space-x-2">
+      {/* Right items: Focus & Views (desktop/tablet) + Zoom Controls (all devices including mobile) */}
+      <div className="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
         <button
           title="Focus Mode"
-          className="hover:bg-white/20 px-1 py-0.5 rounded text-white/80 hover:text-white transition hidden sm:inline"
+          className="hover:bg-white/20 px-1 py-0.5 rounded text-white/80 hover:text-white transition hidden md:inline"
         >
           <Sliders className="w-3 h-3" />
         </button>
 
-        {/* View buttons */}
-        <div className="flex items-center space-x-0.5 border-r border-white/20 pr-2 mr-1">
+        {/* View buttons (hidden on mobile to save space) */}
+        <div className="hidden sm:flex items-center space-x-0.5 border-r border-white/20 pr-2 mr-1">
           <button
             title="Read Mode"
             className="p-1 hover:bg-white/20 text-white/80 hover:text-white rounded transition"
@@ -95,37 +95,47 @@ export const WordStatusBar: React.FC<WordStatusBarProps> = ({
           </button>
         </div>
 
-        {/* Zoom controls */}
-        <div className="flex items-center space-x-1">
+        {/* Zoom controls: accessible on phone, tablet, and desktop */}
+        <div className="flex items-center space-x-1 bg-white/10 sm:bg-transparent px-1.5 py-0.5 rounded">
           <button
             onClick={() => handleZoomChange(-10)}
             title="Zoom Out"
-            className="hover:bg-white/20 p-0.5 rounded transition text-white/80 hover:text-white"
+            className="hover:bg-white/25 active:bg-white/40 p-1 sm:p-0.5 rounded transition text-white/90 hover:text-white flex items-center justify-center cursor-pointer"
           >
-            <ZoomOut className="w-3 h-3" />
+            <ZoomOut className="w-3.5 h-3.5 sm:w-3 sm:h-3" />
           </button>
 
           <input
             type="range"
             min={70}
-            max={150}
+            max={160}
             step={5}
             value={zoomLevel}
             onChange={(e) => setZoomLevel(Number(e.target.value))}
-            className="w-16 h-1 bg-white/40 rounded-lg appearance-none cursor-pointer accent-white"
+            className="hidden sm:inline w-16 h-1 bg-white/40 rounded-lg appearance-none cursor-pointer accent-white"
           />
 
           <button
             onClick={() => handleZoomChange(10)}
             title="Zoom In"
-            className="hover:bg-white/20 p-0.5 rounded transition text-white/80 hover:text-white"
+            className="hover:bg-white/25 active:bg-white/40 p-1 sm:p-0.5 rounded transition text-white/90 hover:text-white flex items-center justify-center cursor-pointer"
           >
-            <ZoomIn className="w-3 h-3" />
+            <ZoomIn className="w-3.5 h-3.5 sm:w-3 sm:h-3" />
           </button>
 
-          <span className="w-8 text-right font-medium text-[10px]">
+          {/* Clickable zoom percentage badge that cycles zoom presets on tap */}
+          <button
+            onClick={() => {
+              if (zoomLevel < 100) setZoomLevel(100);
+              else if (zoomLevel === 100) setZoomLevel(120);
+              else if (zoomLevel <= 125) setZoomLevel(150);
+              else setZoomLevel(90);
+            }}
+            title="Click to cycle zoom presets (90%, 100%, 120%, 150%)"
+            className="w-10 text-center font-medium text-[10px] bg-white/15 sm:bg-transparent hover:bg-white/25 px-1 py-0.5 rounded cursor-pointer transition select-none"
+          >
             {zoomLevel}%
-          </span>
+          </button>
         </div>
       </div>
     </footer>

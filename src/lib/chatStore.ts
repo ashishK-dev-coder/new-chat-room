@@ -224,6 +224,7 @@ export function subscribeToRoom(
 }
 
 // Add message with strict 4-message ceiling, atomic seq counter, and 2-person room enforcement
+// OPTIMIZED: Exactly 1 single Redis command (SET) per sent message
 export async function addMessageToRoom(
   roomId: string,
   message: {
@@ -240,45 +241,28 @@ export async function addMessageToRoom(
   }
 ): Promise<{ success: boolean; messages: ChatMessage[]; message?: ChatMessage; error?: string }> {
   const room = getOrCreateRoom(roomId);
-
   const redis = getRedisClient();
 
-  // 1. Monotonically increasing atomic sequence counter for 100% deterministic ordering
-  let nextSeq = (room.seqCounter || 0) + 1;
-  if (redis) {
-    try {
-      const redisSeq = await redis.incr(`room:${roomId}:seq`);
-      if (typeof redisSeq === 'number' && !isNaN(redisSeq)) {
-        nextSeq = redisSeq;
-      }
-    } catch {
-      nextSeq = (room.seqCounter || 0) + 1;
-    }
-  }
-  room.seqCounter = Math.max(room.seqCounter || 0, nextSeq);
-
-  // 2. Fetch latest shared messages from Redis and merge with in-memory messages (never wipe memory!)
-  if (redis) {
+  // Cold-start sync: Only read from Redis if memory is completely empty (e.g. fresh serverless container)
+  if (room.messages.length === 0 && redis) {
     try {
       const stored = await redis.get<string | ChatMessage[]>(`room:${roomId}:messages`);
       if (stored) {
         const parsed = typeof stored === 'string' ? JSON.parse(stored) : stored;
         if (Array.isArray(parsed) && parsed.length > 0) {
-          const merged = new Map<string, ChatMessage>();
-          for (const m of parsed) merged.set(m.id, m);
-          for (const m of room.messages) {
-            const ex = merged.get(m.id);
-            if (!ex || (m.status === 'seen' && ex.status !== 'seen')) {
-              merged.set(m.id, m);
-            }
-          }
-          room.messages = Array.from(merged.values());
+          room.messages = parsed;
+          const maxSeq = parsed.reduce((max, m) => Math.max(max, m.seq || 0), 0);
+          room.seqCounter = Math.max(room.seqCounter || 0, maxSeq);
         }
       }
     } catch {
       // fallback to memory
     }
   }
+
+  // Monotonically increasing sequence counter without an extra Redis INCR command
+  const nextSeq = (room.seqCounter || 0) + 1;
+  room.seqCounter = nextSeq;
 
   const newMsg: ChatMessage = {
     id: message.id || `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
@@ -309,7 +293,7 @@ export async function addMessageToRoom(
 
   const authorCount = getActiveAuthorCount(room);
 
-  // Broadcast to all connected clients including current participant count
+  // Broadcast to all connected clients including current participant count (0ms instant delivery over SSE)
   const payload = JSON.stringify({
     type: 'message',
     message: newMsg,
@@ -331,7 +315,8 @@ export async function addMessageToRoom(
 
   deadIds.forEach((id) => room.clients.delete(id));
 
-  // Sync to Redis persistent cache
+  // Sync to Redis with 1 single command (SET), updating server cache timestamp
+  room.lastRedisFetchTime = Date.now();
   if (redis) {
     redis.set(`room:${roomId}:messages`, JSON.stringify(room.messages), { ex: 86400 }).catch(() => {});
   }
@@ -340,6 +325,7 @@ export async function addMessageToRoom(
 }
 
 // Mark messages as seen when the co-author opens / reads the document
+// OPTIMIZED: Exactly 1 single Redis command (SET) only if a message status actually changed
 export async function markMessagesAsSeen(
   roomId: string,
   messageIds: string[],
@@ -348,9 +334,10 @@ export async function markMessagesAsSeen(
   const room = getOrCreateRoom(roomId);
   const now = Date.now();
   const seenIds: string[] = [];
-
   const redis = getRedisClient();
-  if (redis) {
+
+  // Cold-start sync: Only read from Redis if memory is completely empty
+  if (room.messages.length === 0 && redis) {
     try {
       const stored = await redis.get<string | ChatMessage[]>(`room:${roomId}:messages`);
       if (stored) {
@@ -395,6 +382,8 @@ export async function markMessagesAsSeen(
     });
     deadIds.forEach((id) => room.clients.delete(id));
 
+    // Exactly 1 Redis command (SET)
+    room.lastRedisFetchTime = Date.now();
     if (redis) {
       redis.set(`room:${roomId}:messages`, JSON.stringify(room.messages), { ex: 86400 }).catch(() => {});
     }
@@ -407,6 +396,7 @@ export function clearRoomMessages(roomId: string, senderId?: string): { success:
   const room = getOrCreateRoom(roomId);
   room.messages = [];
   room.seqCounter = 0;
+  room.lastRedisFetchTime = Date.now();
 
   const payload = JSON.stringify({
     type: 'clear',
@@ -429,7 +419,6 @@ export function clearRoomMessages(roomId: string, senderId?: string): { success:
   const redis = getRedisClient();
   if (redis) {
     redis.del(`room:${roomId}:messages`).catch(() => {});
-    redis.del(`room:${roomId}:seq`).catch(() => {});
   }
 
   return { success: true };
@@ -450,8 +439,9 @@ export async function getRoomMessagesAsync(roomId: string): Promise<ChatMessage[
   const room = getOrCreateRoom(roomId);
   const now = Date.now();
 
-  // In-memory throttle: serve from memory if Redis was fetched < 1200ms ago on this server instance
-  if (room.lastRedisFetchTime && now - room.lastRedisFetchTime < 1200) {
+  // In-memory throttle: serve from memory if Redis was fetched or updated < 3500ms ago
+  // This saves thousands of Redis read calls during active polling or multi-client bursts
+  if (room.lastRedisFetchTime && now - room.lastRedisFetchTime < 3500) {
     return getRoomMessages(roomId);
   }
 

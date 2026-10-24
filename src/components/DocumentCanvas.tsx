@@ -17,6 +17,7 @@ interface DocumentCanvasProps {
   onPanicWipe?: () => void;
   peerTyping: boolean;
   darkMode?: boolean;
+  zoomLevel?: number;
 }
 
 interface AISection {
@@ -72,6 +73,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   onPanicWipe,
   peerTyping,
   darkMode = false,
+  zoomLevel = 100,
 }) => {
   const [inputText, setInputText] = useState('');
   const [taggedMessage, setTaggedMessage] = useState<{
@@ -314,7 +316,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
     <div
       ref={containerRef}
       onClick={handleContainerClick}
-      className={`flex-1 overflow-y-auto flex justify-center py-2 sm:py-8 pb-44 sm:pb-60 px-1.5 sm:px-6 cursor-default relative transition-colors w-full min-w-0 overscroll-y-contain ${
+      className={`flex-1 overflow-auto flex justify-center py-2 sm:py-8 pb-44 sm:pb-60 px-1 sm:px-6 cursor-default relative transition-colors w-full min-w-0 overscroll-contain ${
         darkMode ? 'bg-[#181818]' : 'bg-[#ebebeb]'
       }`}
       style={{
@@ -332,9 +334,11 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
           fontFamily: getFontFamilyStyle(),
           fontSize: `${fontSettings.size}pt`,
           textAlign: fontSettings.alignment,
+          transform: zoomLevel && zoomLevel !== 100 ? `scale(${zoomLevel / 100})` : undefined,
+          transformOrigin: 'top center',
+          transition: 'transform 0.15s ease-out',
         }}
         onDoubleClick={handleParagraphDoubleClick}
-        onTouchEnd={handleParagraphTouchEnd}
       >
         {/* Document Header Zone */}
         <div className="w-full min-w-0">
