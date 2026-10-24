@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { recordAuthorHeartbeat } from '@/lib/chatStore';
+import { getRedisClient } from '@/lib/redis';
 
 export async function POST(req: NextRequest) {
   try {
@@ -7,7 +8,20 @@ export async function POST(req: NextRequest) {
     const { roomId = 'default-room', senderId } = body;
 
     if (senderId) {
-      const clientCount = recordAuthorHeartbeat(roomId, senderId);
+      let clientCount = recordAuthorHeartbeat(roomId, senderId);
+
+      const redis = getRedisClient();
+      if (redis) {
+        try {
+          const keys = await redis.keys(`room:${roomId}:author:*`);
+          if (Array.isArray(keys) && keys.length > 0) {
+            clientCount = Math.min(2, Math.max(1, keys.length));
+          }
+        } catch {
+          // fallback
+        }
+      }
+
       return NextResponse.json({ success: true, clientCount });
     }
 

@@ -76,6 +76,13 @@ export function recordAuthorHeartbeat(roomId: string, senderId: string): number 
   const room = getOrCreateRoom(roomId);
   room.authorHeartbeats.set(senderId, Date.now());
   const count = getActiveAuthorCount(room);
+
+  // Sync to Redis presence key with 8-second TTL if Redis is configured
+  const redis = getRedisClient();
+  if (redis) {
+    redis.set(`room:${roomId}:author:${senderId}`, '1', { ex: 8 }).catch(() => {});
+  }
+
   return count;
 }
 
@@ -97,7 +104,13 @@ export function removeAuthorFromRoom(roomId: string, senderId: string): void {
   });
   connIdsToRemove.forEach((id) => room.clients.delete(id));
 
-  // 3. Immediately broadcast updated presence (drops to 1 Author in < 50ms)
+  // 3. Remove from Redis presence if configured
+  const redis = getRedisClient();
+  if (redis) {
+    redis.del(`room:${roomId}:author:${senderId}`).catch(() => {});
+  }
+
+  // 4. Immediately broadcast updated presence (drops to 1 Author in < 50ms)
   broadcastPresence(room);
 }
 
@@ -107,6 +120,7 @@ export function getActiveAuthorIds(room: RoomState): Set<string> {
   const ids = new Set<string>();
   const deadConnIds: string[] = [];
 
+  // 1. Open SSE client streams
   room.clients.forEach((sub, connId) => {
     const lastBeat = room.authorHeartbeats?.get(sub.senderId) ?? now;
     // If no heartbeat within 6 seconds, consider connection dead
@@ -120,6 +134,19 @@ export function getActiveAuthorIds(room: RoomState): Set<string> {
   deadConnIds.forEach((id) => {
     room.clients.delete(id);
   });
+
+  // 2. Live author heartbeats (guarantees author 2 is detected immediately upon opening tab / polling)
+  if (room.authorHeartbeats) {
+    const expiredAuthors: string[] = [];
+    room.authorHeartbeats.forEach((lastBeat, senderId) => {
+      if (now - lastBeat <= HEARTBEAT_TIMEOUT_MS) {
+        ids.add(senderId);
+      } else {
+        expiredAuthors.push(senderId);
+      }
+    });
+    expiredAuthors.forEach((sid) => room.authorHeartbeats?.delete(sid));
+  }
 
   return ids;
 }
@@ -385,7 +412,8 @@ export function clearRoomMessages(roomId: string, senderId?: string): { success:
 
 export function getRoomMessages(roomId: string): ChatMessage[] {
   const room = rooms.get(roomId);
-  return room ? room.messages.slice(-MAX_MESSAGES) : [];
+  if (!room) return [];
+  return [...room.messages].sort((a, b) => a.timestamp - b.timestamp).slice(-MAX_MESSAGES);
 }
 
 export async function getRoomMessagesAsync(roomId: string): Promise<ChatMessage[]> {
@@ -397,7 +425,7 @@ export async function getRoomMessagesAsync(roomId: string): Promise<ChatMessage[
         const parsed = typeof data === 'string' ? JSON.parse(data) : data;
         if (Array.isArray(parsed)) {
           const room = getOrCreateRoom(roomId);
-          room.messages = parsed.slice(-MAX_MESSAGES);
+          room.messages = parsed.sort((a: ChatMessage, b: ChatMessage) => a.timestamp - b.timestamp).slice(-MAX_MESSAGES);
           return room.messages;
         }
       }

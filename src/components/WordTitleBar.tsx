@@ -127,17 +127,30 @@ export const WordTitleBar: React.FC<WordTitleBarProps> = ({
               className="flex items-center space-x-1 px-1.5 py-0.5 rounded hover:bg-white/10 transition cursor-pointer mr-1"
             >
               <div className="flex -space-x-1.5">
-                <div className="w-5 h-5 rounded-full bg-[#0078d4] text-white text-[9px] font-bold flex items-center justify-center border border-[#185abd]" title="A. Kumar">
-                  AK
+                <div
+                  className="w-5 h-5 rounded-full bg-[#0078d4] text-white text-[9px] font-bold flex items-center justify-center border border-[#185abd]"
+                  title="Author 1 (Online)"
+                >
+                  A1
                 </div>
-                {displayCount > 1 && (
-                  <div className="w-5 h-5 rounded-full bg-[#107c41] text-white text-[9px] font-bold flex items-center justify-center border border-[#185abd]" title="M. Rao">
-                    MR
+                {displayCount > 1 ? (
+                  <div
+                    className="w-5 h-5 rounded-full bg-[#107c41] text-white text-[9px] font-bold flex items-center justify-center border border-[#185abd]"
+                    title="Author 2 (Online)"
+                  >
+                    A2
+                  </div>
+                ) : (
+                  <div
+                    className="w-5 h-5 rounded-full bg-white/20 text-white/60 text-[8px] font-medium flex items-center justify-center border border-white/20"
+                    title="Waiting for Author 2..."
+                  >
+                    +
                   </div>
                 )}
               </div>
-              <span className="text-[10px] text-white/80 hidden sm:inline ml-1 font-medium">
-                {displayCount} {displayCount === 1 ? 'Author' : 'Authors'}
+              <span className="text-[10px] text-white/90 ml-1 font-medium select-none">
+                {displayCount === 2 ? '2 Authors' : '1 Author'}
               </span>
             </div>
           );

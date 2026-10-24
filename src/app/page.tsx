@@ -11,19 +11,67 @@ import { WordStatusBar } from '@/components/WordStatusBar';
 import { SettingsModal } from '@/components/SettingsModal';
 import { ChatMessage } from '@/lib/chatStore';
 
+// Deterministic message sorting (by timestamp ascending), deduplication, and last 5 rolling window
+function mergeAndSortMessages(
+  prev: ChatMessage[],
+  incoming: ChatMessage[]
+): { next: ChatMessage[]; changed: boolean } {
+  const map = new Map<string, ChatMessage>();
+
+  for (const m of prev) {
+    if (m && m.id) {
+      map.set(m.id, m);
+    }
+  }
+
+  let changed = false;
+
+  for (const m of incoming) {
+    if (!m || !m.id) continue;
+    const existing = map.get(m.id);
+    if (!existing) {
+      map.set(m.id, m);
+      changed = true;
+    } else {
+      // Keep higher status progression: seen > delivered > pending
+      const statusRank: Record<string, number> = { failed: 0, pending: 1, delivered: 2, seen: 3 };
+      const currentRank = statusRank[m.status || 'delivered'] ?? 1;
+      const existingRank = statusRank[existing.status || 'delivered'] ?? 1;
+
+      if (currentRank > existingRank || existing.status !== m.status || existing.text !== m.text) {
+        map.set(m.id, { ...existing, ...m, status: currentRank >= existingRank ? m.status : existing.status });
+        changed = true;
+      }
+    }
+  }
+
+  // Strictly sort ascending by timestamp so message sequence is 100% deterministic
+  const sorted = Array.from(map.values())
+    .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
+    .slice(-5);
+
+  if (sorted.length !== prev.length) {
+    changed = true;
+  }
+
+  return { next: sorted, changed };
+}
+
 export default function WordChatApp() {
-  // Session & Identity: Stable author identity per device / browser
+  // Session & Identity: Distinct author identity per tab / window (Author 1 vs Author 2)
   const [tabAuthorId, setTabAuthorId] = useState<string>('');
   const tabAuthorIdRef = useRef<string>('');
+  const markedSeenIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    // Generate or retrieve stable unique author ID per device
+    // Generate or retrieve stable unique author ID per tab / window
+    // Uses sessionStorage so two tabs on same device/browser are recognized as distinct Author 1 and Author 2
     let authorId: string | null = null;
     try {
-      authorId = localStorage.getItem('word_author_session_id');
+      authorId = sessionStorage.getItem('word_tab_author_id');
       if (!authorId) {
         authorId = `author_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-        localStorage.setItem('word_author_session_id', authorId);
+        sessionStorage.setItem('word_tab_author_id', authorId);
       }
     } catch {
       authorId = `author_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -517,56 +565,35 @@ export default function WordChatApp() {
           const data = JSON.parse(event.data);
 
           if (data.type === 'init') {
-            // Only update messages if server actually has messages
-            // Never overwrite existing local messages with an empty array upon server cold-start or reconnect!
             if (Array.isArray(data.messages) && data.messages.length > 0) {
-              const confirmed = data.messages.map((m: ChatMessage) => ({
-                ...m,
-                status: m.status || 'delivered',
-              }));
-              setMessages(confirmed.slice(-5));
+              setMessages((prev) => {
+                const { next } = mergeAndSortMessages(prev, data.messages);
+                return next;
+              });
             }
             if (data.clientCount !== undefined) {
               const count = Math.min(2, Math.max(1, Number(data.clientCount) || 1));
               setParticipantCount(count);
             }
-          } else if (data.type === 'message') {
+          } else if (data.type === 'message' && data.message) {
             lastActivityTime.current = Date.now();
             const incomingMsg: ChatMessage = {
               ...data.message,
-              status: 'delivered', // Confirmed from server broadcast
+              status: data.message.status || 'delivered',
             };
-            // Append incoming message and keep ONLY latest 4
+
+            // Deduplicate and insert deterministically
             setMessages((prev) => {
-              // 1. If this exact message ID is already present (e.g. from optimistic send)
-              const existingIdx = prev.findIndex((m) => m.id === incomingMsg.id);
-              if (existingIdx !== -1) {
-                const updated = [...prev];
-                updated[existingIdx] = {
-                  ...updated[existingIdx],
-                  ...incomingMsg,
-                  status: 'delivered',
-                };
-                return updated.slice(-5);
-              }
-
-              // 2. If this was our own optimistic message, replace it with confirmed message
-              const optIdx = prev.findIndex(
+              const withoutOpt = prev.filter(
                 (m) =>
-                  m.senderId === incomingMsg.senderId &&
-                  m.text === incomingMsg.text &&
-                  (m.status === 'pending' || m.id.startsWith('opt-'))
+                  !(
+                    m.senderId === incomingMsg.senderId &&
+                    m.text === incomingMsg.text &&
+                    (m.status === 'pending' || m.id.startsWith('msg-opt-'))
+                  )
               );
-
-              let updated: ChatMessage[];
-              if (optIdx !== -1) {
-                updated = [...prev];
-                updated[optIdx] = incomingMsg;
-              } else {
-                updated = [...prev, incomingMsg];
-              }
-
-              return updated.slice(-5);
+              const { next } = mergeAndSortMessages(withoutOpt, [incomingMsg]);
+              return next;
             });
 
             if (data.clientCount !== undefined) {
@@ -575,19 +602,18 @@ export default function WordChatApp() {
 
             const incomingSenderId = data.message?.senderId;
             const currentTabId = tabAuthorIdRef.current;
-            // Check if the message arrived from the other author (not self)
-            const isFromOtherAuthor = !incomingSenderId || incomingSenderId !== currentTabId;
+            const isFromOtherAuthor = incomingSenderId && incomingSenderId !== currentTabId;
 
             if (isFromOtherAuthor) {
-              // Message from peer confirms active 2-author presence
               setParticipantCount(2);
 
-              // 1. If currently logged out: activate discreet Font Color 'A' border alert
+              // 1. If currently locked: activate subtle font color icon blink
               if (!isUnlockedRef.current) {
                 setIsFontColorBlinking(true);
               } else {
-                // If unlocked and reading: immediately send seen acknowledgment to peer co-author
-                if (incomingMsg.id) {
+                // If unlocked: mark as seen immediately (with deduplication)
+                if (incomingMsg.id && !markedSeenIdsRef.current.has(incomingMsg.id)) {
+                  markedSeenIdsRef.current.add(incomingMsg.id);
                   fetch('/api/chat/seen', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -596,27 +622,30 @@ export default function WordChatApp() {
                       messageIds: [incomingMsg.id],
                       senderId: currentTabId,
                     }),
-                  }).catch(() => {});
+                  }).catch(() => {
+                    markedSeenIdsRef.current.delete(incomingMsg.id);
+                  });
                 }
               }
 
-              // 2. Play notification sound chime:
+              // 2. Play notification sound
               playNotificationSound();
             }
           } else if (data.type === 'seen' && Array.isArray(data.messageIds)) {
-            // Co-author has viewed message: update to double tick (seen)
+            // Update seen status in-place without re-ordering or layout shifting
+            data.messageIds.forEach((id: string) => markedSeenIdsRef.current.add(id));
             setMessages((prev) =>
               prev.map((m) =>
-                data.messageIds.includes(m.id) ? { ...m, status: 'seen' } : m
+                data.messageIds.includes(m.id) ? { ...m, status: 'seen' as const } : m
               )
             );
           } else if (data.type === 'clear') {
             setMessages([]);
+            markedSeenIdsRef.current.clear();
             if (typeof window !== 'undefined') {
               sessionStorage.removeItem(`word_chat_msgs_${roomId}`);
             }
           } else if (data.type === 'presence') {
-            // Strictly clamp to at most 2 co-authors
             const count = Math.min(2, Math.max(1, Number(data.clientCount) || 1));
             setParticipantCount(count);
           } else if (data.type === 'error') {
@@ -705,38 +734,31 @@ export default function WordChatApp() {
     let isMounted = true;
     const pollSync = async () => {
       try {
-        const res = await fetch(`/api/chat/sync?room=${encodeURIComponent(roomId)}&_t=${Date.now()}`);
+        const activeId = tabAuthorIdRef.current || tabAuthorId;
+        const res = await fetch(
+          `/api/chat/sync?room=${encodeURIComponent(roomId)}&senderId=${encodeURIComponent(activeId)}&_t=${Date.now()}`
+        );
         if (res.ok && isMounted) {
           const data = await res.json();
           if (Array.isArray(data?.messages) && data.messages.length > 0) {
             setMessages((prev) => {
-              const serverMsgs: ChatMessage[] = data.messages;
-              let changed = false;
-              const merged = serverMsgs.map((sm) => {
-                const local = prev.find((pm) => pm.id === sm.id);
-                if (local && local.status === 'pending' && sm.status === 'delivered') {
-                  changed = true;
-                  return sm;
-                }
-                if (!local || local.status !== sm.status || local.text !== sm.text) {
-                  changed = true;
-                  return sm;
-                }
-                return local;
-              });
-              if (changed || merged.length !== prev.length) {
-                return merged.slice(-5);
-              }
-              return prev;
+              const { next, changed } = mergeAndSortMessages(prev, data.messages);
+              return changed ? next : prev;
             });
 
-            // If there are peer messages that are not yet marked seen:
-            const activeId = tabAuthorIdRef.current || tabAuthorId;
-            const unreadIds = data.messages
-              .filter((m: ChatMessage) => m.senderId !== activeId && m.status !== 'seen')
+            // Mark unread peer messages as seen with deduplication
+            const unreadIds: string[] = data.messages
+              .filter(
+                (m: ChatMessage) =>
+                  Boolean(m.id) &&
+                  m.senderId !== activeId &&
+                  m.status !== 'seen' &&
+                  !markedSeenIdsRef.current.has(m.id)
+              )
               .map((m: ChatMessage) => m.id);
 
             if (unreadIds.length > 0) {
+              unreadIds.forEach((id: string) => markedSeenIdsRef.current.add(id));
               fetch('/api/chat/seen', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -745,7 +767,9 @@ export default function WordChatApp() {
                   messageIds: unreadIds,
                   senderId: activeId,
                 }),
-              }).catch(() => {});
+              }).catch(() => {
+                unreadIds.forEach((id: string) => markedSeenIdsRef.current.delete(id));
+              });
             }
           }
           if (data?.clientCount !== undefined) {
@@ -786,8 +810,8 @@ export default function WordChatApp() {
 
     // Instant 0ms UI update: message appears immediately with pending... status
     setMessages((prev) => {
-      const updated = [...prev, optimisticMsg];
-      return updated.slice(-5);
+      const { next } = mergeAndSortMessages(prev, [optimisticMsg]);
+      return next;
     });
 
     try {

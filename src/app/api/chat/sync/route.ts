@@ -1,14 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getOrCreateRoom, getRoomMessagesAsync, getActiveAuthorCount } from '@/lib/chatStore';
+import { getOrCreateRoom, getRoomMessagesAsync, getActiveAuthorCount, recordAuthorHeartbeat } from '@/lib/chatStore';
+import { getRedisClient } from '@/lib/redis';
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const roomId = searchParams.get('room') || 'default-room';
+    const senderId = searchParams.get('senderId');
 
     const room = getOrCreateRoom(roomId);
+    if (senderId) {
+      recordAuthorHeartbeat(roomId, senderId);
+    }
+
     const messages = await getRoomMessagesAsync(roomId);
-    const clientCount = getActiveAuthorCount(room);
+    let clientCount = getActiveAuthorCount(room);
+
+    // Cross-lambda presence check via Redis keys if configured
+    const redis = getRedisClient();
+    if (redis) {
+      try {
+        const keys = await redis.keys(`room:${roomId}:author:*`);
+        if (Array.isArray(keys) && keys.length > 0) {
+          clientCount = Math.min(2, Math.max(1, keys.length));
+        }
+      } catch {
+        // fallback
+      }
+    }
 
     return NextResponse.json(
       {
