@@ -236,35 +236,45 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
     try {
       if (type === 'preview-accept') {
         // Peer accepted our invite! Offerer creates SDP offer
-        if (isInitiatorRef.current && pc.signalingState === 'stable' && !hasCreatedOfferRef.current) {
-          hasCreatedOfferRef.current = true;
-          setStatus('connecting');
-          const offer = await pc.createOffer({
-            offerToReceiveVideo: true,
-            offerToReceiveAudio: false,
-          });
-          await pc.setLocalDescription(offer);
-          await sendSignalRef.current('offer', offer);
+        if (isInitiatorRef.current) {
+          if (pc.signalingState === 'stable' && !hasCreatedOfferRef.current) {
+            hasCreatedOfferRef.current = true;
+            setStatus('connecting');
+            const offer = await pc.createOffer({
+              offerToReceiveVideo: true,
+              offerToReceiveAudio: false,
+            });
+            await pc.setLocalDescription(offer);
+            await sendSignalRef.current('offer', offer);
+          } else if (pc.signalingState === 'have-local-offer' && pc.localDescription) {
+            // Re-send existing offer so answerer is guaranteed to receive it
+            await sendSignalRef.current('offer', pc.localDescription);
+          }
         }
       } else if (type === 'offer') {
         // Peer sent offer: set remote description and create answer
-        if (!isInitiatorRef.current && pc.signalingState === 'stable' && !hasAnsweredRef.current) {
-          hasAnsweredRef.current = true;
-          setStatus('connecting');
-          const sessionDesc = new RTCSessionDescription(data as RTCSessionDescriptionInit);
-          await pc.setRemoteDescription(sessionDesc);
+        if (!isInitiatorRef.current) {
+          if (pc.signalingState === 'stable' && !hasAnsweredRef.current) {
+            hasAnsweredRef.current = true;
+            setStatus('connecting');
+            const sessionDesc = new RTCSessionDescription(data as RTCSessionDescriptionInit);
+            await pc.setRemoteDescription(sessionDesc);
 
-          // Drain queued ICE candidates
-          while (iceCandidatesQueueRef.current.length > 0) {
-            const cand = iceCandidatesQueueRef.current.shift();
-            if (cand) {
-              await pc.addIceCandidate(new RTCIceCandidate(cand)).catch(() => {});
+            // Drain queued ICE candidates
+            while (iceCandidatesQueueRef.current.length > 0) {
+              const cand = iceCandidatesQueueRef.current.shift();
+              if (cand) {
+                await pc.addIceCandidate(new RTCIceCandidate(cand)).catch(() => {});
+              }
             }
-          }
 
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          await sendSignalRef.current('answer', answer);
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            await sendSignalRef.current('answer', answer);
+          } else if (hasAnsweredRef.current && pc.localDescription) {
+            // Re-send existing answer so initiator is guaranteed to receive it
+            await sendSignalRef.current('answer', pc.localDescription);
+          }
         }
       } else if (type === 'answer') {
         // Initiator received answer: set remote description
@@ -309,6 +319,7 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
 
     let isMounted = true;
     let inviteInterval: NodeJS.Timeout | null = null;
+    let acceptInterval: NodeJS.Timeout | null = null;
 
     // Direct listener registration (no React tree re-renders or camera restarts)
     const unregisterListener = registerSignalListener((sig) => {
@@ -340,6 +351,17 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
       } else {
         setStatus('connecting');
         await sendSignalRef.current('preview-accept');
+
+        // Re-send preview-accept every 1.5s while waiting for offer so offerer never misses it
+        let acceptRetries = 0;
+        acceptInterval = setInterval(() => {
+          if (!isMounted || acceptRetries >= 10 || statusRef.current === 'connected' || hasAnsweredRef.current) {
+            if (acceptInterval) clearInterval(acceptInterval);
+            return;
+          }
+          acceptRetries++;
+          sendSignalRef.current('preview-accept').catch(() => {});
+        }, 1500);
       }
 
       // Flush any queued ICE candidates if remote desc ready
@@ -398,6 +420,9 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
       isMounted = false;
       if (inviteInterval) {
         clearInterval(inviteInterval);
+      }
+      if (acceptInterval) {
+        clearInterval(acceptInterval);
       }
       unregisterListener();
       window.removeEventListener('keydown', handleKeyDown, true);

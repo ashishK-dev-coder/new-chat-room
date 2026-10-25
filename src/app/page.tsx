@@ -1192,7 +1192,11 @@ export default function WordChatApp() {
             }
           }
 
-          if (data?.signal) {
+          if (Array.isArray(data?.signals) && data.signals.length > 0) {
+            data.signals.forEach((sig: WebRTCSignal) => {
+              handleIncomingSignal(sig);
+            });
+          } else if (data?.signal) {
             const sig = data.signal.signal || data.signal;
             handleIncomingSignal(sig);
           }
@@ -1209,16 +1213,21 @@ export default function WordChatApp() {
         // ignore offline sync
       } finally {
         if (isMounted) {
-          // Adaptive polling interval based on user state & SSE connection status
+          // Adaptive polling interval: During active video call or invite, poll at 650ms for instant WebRTC handshake!
+          const isCallActiveOrConnecting =
+            isPreviewActive || showPreviewConfirm || incomingPreviewInvite !== null;
+
           let nextDelay = 3500;
-          if (document.hidden) {
+          if (isCallActiveOrConnecting) {
+            nextDelay = 650; // Ultra-fast 650ms polling so offer/answer/candidates exchange in < 1s
+          } else if (document.hidden) {
             nextDelay = 15000; // Background tab: 15s
           } else if (isSseConnectedRef.current) {
-            nextDelay = 12000; // Real-time SSE is active (messages arrive in 0ms): 12s passive sync
+            nextDelay = 12000; // Real-time SSE is active: 12s passive sync
           } else if (!isUnlockedRef.current) {
             nextDelay = 5000; // Locked Protected View: 5s
           } else {
-            nextDelay = 3000; // Active chat fallback when SSE is disconnected: 3s
+            nextDelay = 3000; // Active chat fallback: 3s
           }
           syncTimeout = setTimeout(runSync, nextDelay);
         }
@@ -1242,11 +1251,11 @@ export default function WordChatApp() {
       if (syncTimeout) clearTimeout(syncTimeout);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [roomId, tabAuthorId, playNotificationSound]);
+  }, [roomId, tabAuthorId, playNotificationSound, isPreviewActive, showPreviewConfirm, incomingPreviewInvite]);
 
-  // Auto-cut video preview immediately if either author logs out
+  // Auto-cut video preview immediately if THIS author logs out
   useEffect(() => {
-    if (!bothUnlocked && isPreviewActive) {
+    if (!isUnlocked && isPreviewActive) {
       try {
         sendSignal('preview-end').catch(() => {});
       } catch {
@@ -1256,7 +1265,7 @@ export default function WordChatApp() {
       setShowPreviewConfirm(false);
       setIncomingPreviewInvite(null);
     }
-  }, [bothUnlocked, isPreviewActive, sendSignal]);
+  }, [isUnlocked, isPreviewActive, sendSignal]);
 
   // Send message handler with 0ms instant optimistic update + acknowledgment tracking
   const handleSendMessage = async (text: string, replyTo?: ChatMessage['replyTo']) => {

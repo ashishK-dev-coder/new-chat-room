@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
       timestamp: Date.now(),
     };
 
-    const res = broadcastSignal(roomId, signal);
+    const res = await broadcastSignal(roomId, signal);
     return NextResponse.json({ success: true, deliveredCount: res.deliveredCount });
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : 'Unknown error';

@@ -111,6 +111,53 @@ export function setAuthorUnlockedStatus(
   };
 }
 
+// Synchronize author presence across serverless Lambdas using Redis with automatic TTL expiry
+export async function syncAuthorPresenceAsync(
+  roomId: string,
+  authorId: string,
+  unlocked: boolean
+): Promise<{ bothUnlocked: boolean; clientCount: number; unlockedCount: number }> {
+  const room = getOrCreateRoom(roomId);
+  if (unlocked) {
+    room.unlockedAuthors.add(authorId);
+  } else {
+    room.unlockedAuthors.delete(authorId);
+  }
+  room.authorHeartbeats.set(authorId, Date.now());
+
+  let bothUnlocked = isBothAuthorsUnlocked(room);
+  let unlockedCount = room.unlockedAuthors.size;
+  let clientCount = getActiveAuthorCount(room);
+
+  const redis = getRedisClient();
+  if (redis) {
+    try {
+      const presenceKey = `room:${roomId}:presence:${authorId}`;
+      if (unlocked) {
+        await redis.set(presenceKey, '1', { ex: 35 });
+      } else {
+        await redis.del(presenceKey);
+      }
+
+      const [p1, p2] = await Promise.all([
+        redis.get(`room:${roomId}:presence:author-1`),
+        redis.get(`room:${roomId}:presence:author-2`),
+      ]);
+
+      const author1Online = Boolean(p1) || room.unlockedAuthors.has('author-1');
+      const author2Online = Boolean(p2) || room.unlockedAuthors.has('author-2');
+
+      bothUnlocked = author1Online && author2Online;
+      unlockedCount = (author1Online ? 1 : 0) + (author2Online ? 1 : 0);
+      clientCount = Math.min(2, Math.max(1, unlockedCount));
+    } catch {
+      // fallback to in-memory
+    }
+  }
+
+  return { bothUnlocked, clientCount, unlockedCount };
+}
+
 export function isBothAuthorsUnlocked(room: RoomState): boolean {
   if (!room.unlockedAuthors) return false;
   const activeIds = getActiveAuthorIds(room);
@@ -162,7 +209,13 @@ export function removeAuthorFromRoom(roomId: string, senderId: string): void {
   });
   connIdsToRemove.forEach((id) => room.clients.delete(id));
 
-  // 3. Immediately broadcast updated presence
+  // 3. Clear Redis presence immediately
+  const redis = getRedisClient();
+  if (redis) {
+    redis.del(`room:${roomId}:presence:${senderId}`).catch(() => {});
+  }
+
+  // 4. Immediately broadcast updated presence
   broadcastPresence(room);
 }
 
@@ -593,7 +646,7 @@ export function queuePendingSignal(roomId: string, targetAuthor: string, signal:
   const now = Date.now();
   const valid = existing.filter((s) => now - (s.timestamp || now) < 30000);
   valid.push({ ...signal, timestamp: now });
-  room.pendingSignals.set(targetAuthor, valid.slice(-5));
+  room.pendingSignals.set(targetAuthor, valid.slice(-10));
 }
 
 export function popPendingSignals(roomId: string, targetAuthor: string): WebRTCSignal[] {
@@ -614,11 +667,11 @@ export function clearPendingSignals(roomId: string): void {
   }
 }
 
-// Broadcast WebRTC signaling data directly over SSE to the peer author & queue for polling retrieval
-export function broadcastSignal(
+// Broadcast WebRTC signaling data directly over SSE to the peer author & queue in Redis for cross-container retrieval
+export async function broadcastSignal(
   roomId: string,
   signal: WebRTCSignal
-): { success: boolean; deliveredCount: number } {
+): Promise<{ success: boolean; deliveredCount: number }> {
   const room = getOrCreateRoom(roomId);
   const now = Date.now();
   const fullSignal: WebRTCSignal = {
@@ -633,13 +686,8 @@ export function broadcastSignal(
   const targetAuthor =
     signal.targetId || (signal.senderId === 'author-2' ? 'author-1' : 'author-2');
 
-  // Buffer in memory ONLY for persistent preview-invite so polling or delayed SSE pick it up.
-  // Ephemeral SDP WebRTC handshakes (offer, answer, candidate) are strictly live SSE streams.
-  if (signal.type === 'preview-end' || signal.type === 'preview-decline' || signal.type === 'preview-accept') {
-    clearPendingSignals(roomId);
-  } else if (signal.type === 'preview-invite') {
-    queuePendingSignal(roomId, targetAuthor, fullSignal);
-  }
+  // 1. In-memory queueing for any local listener on this process
+  queuePendingSignal(roomId, targetAuthor, fullSignal);
 
   let deliveredCount = 0;
   const deadIds: string[] = [];
@@ -662,18 +710,78 @@ export function broadcastSignal(
 
   deadIds.forEach((id) => room.clients.delete(id));
 
-  // Also buffer in Redis only for preview-invite with 25s TTL for cross-container serverless fallback
+  // 2. Cross-container Redis queueing for ALL WebRTC handshake signals
   const redis = getRedisClient();
   if (redis) {
-    if (signal.type === 'preview-end' || signal.type === 'preview-decline' || signal.type === 'preview-accept') {
-      redis.del(`room:${roomId}:signal:${targetAuthor}`).catch(() => {});
-      redis.del(`room:${roomId}:signal:${signal.senderId}`).catch(() => {});
-    } else if (signal.type === 'preview-invite') {
-      redis.set(`room:${roomId}:signal:${targetAuthor}`, payload, { ex: 25 }).catch(() => {});
+    try {
+      const listKey = `room:${roomId}:signals:${targetAuthor}`;
+      if (signal.type === 'preview-end' || signal.type === 'preview-decline') {
+        // Clear pending queues so stale invites or offers are discarded
+        await redis.del(listKey);
+        await redis.del(`room:${roomId}:signals:${signal.senderId}`);
+        // Push the end/decline signal so peer picks it up immediately
+        await redis.rpush(listKey, JSON.stringify(fullSignal));
+        await redis.expire(listKey, 30);
+      } else {
+        // Push preview-invite, preview-accept, offer, answer, and ICE candidates
+        await redis.rpush(listKey, JSON.stringify(fullSignal));
+        await redis.expire(listKey, 60);
+      }
+    } catch (err) {
+      console.warn('[Redis] broadcastSignal queue notice:', err);
     }
   }
 
   return { success: true, deliveredCount };
+}
+
+// Retrieve and pop all pending signals across both memory and Redis
+export async function popAllSignalsAsync(roomId: string, targetAuthor: string): Promise<WebRTCSignal[]> {
+  const signals: WebRTCSignal[] = [];
+
+  // 1. Check in-memory pending signals
+  const inMemory = popPendingSignals(roomId, targetAuthor);
+  if (inMemory.length > 0) {
+    signals.push(...inMemory);
+  }
+
+  // 2. Fetch and pop all pending signals from Redis
+  const redis = getRedisClient();
+  if (redis) {
+    try {
+      const listKey = `room:${roomId}:signals:${targetAuthor}`;
+      const rawList = await redis.lrange<string[]>(listKey, 0, -1);
+      if (Array.isArray(rawList) && rawList.length > 0) {
+        await redis.del(listKey);
+        rawList.forEach((raw) => {
+          try {
+            const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            const sig = parsed?.signal || parsed;
+            if (sig && sig.type) {
+              signals.push(sig);
+            }
+          } catch {
+            // ignore
+          }
+        });
+      }
+    } catch (err) {
+      console.warn('[Redis] popAllSignalsAsync notice:', err);
+    }
+  }
+
+  // 3. Deduplicate signals in case any signal was present in both in-memory and Redis
+  const seenKeys = new Set<string>();
+  const uniqueSignals: WebRTCSignal[] = [];
+  for (const s of signals) {
+    const key = `${s.type}-${s.senderId}-${JSON.stringify(s.data || '')}`;
+    if (!seenKeys.has(key)) {
+      seenKeys.add(key);
+      uniqueSignals.push(s);
+    }
+  }
+
+  return uniqueSignals;
 }
 
 

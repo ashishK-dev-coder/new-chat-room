@@ -3,13 +3,11 @@ import {
   getOrCreateRoom,
   getRoomMessagesAsync,
   getActiveAuthorCount,
-  recordAuthorHeartbeat,
-  popPendingSignals,
-  setAuthorUnlockedStatus,
   isBothAuthorsUnlocked,
   getUnlockedAuthorCount,
+  syncAuthorPresenceAsync,
+  popAllSignalsAsync,
 } from '@/lib/chatStore';
-import { getRedisClient } from '@/lib/redis';
 
 export async function GET(req: NextRequest) {
   try {
@@ -20,47 +18,31 @@ export async function GET(req: NextRequest) {
     const rawUnlocked = searchParams.get('unlocked');
 
     const room = getOrCreateRoom(roomId);
-    if (senderId) {
-      recordAuthorHeartbeat(roomId, senderId);
-      if (rawUnlocked !== null) {
-        setAuthorUnlockedStatus(roomId, senderId, rawUnlocked === 'true');
-      }
-    }
 
+    // 1. Synchronize Author Presence across serverless Lambdas using Redis + Memory
+    const presence = senderId
+      ? await syncAuthorPresenceAsync(roomId, senderId, rawUnlocked === 'true')
+      : {
+          bothUnlocked: isBothAuthorsUnlocked(room),
+          clientCount: getActiveAuthorCount(room),
+          unlockedCount: getUnlockedAuthorCount(room),
+        };
+
+    // 2. Fetch room messages
     const messages = await getRoomMessagesAsync(roomId);
-    const clientCount = getActiveAuthorCount(room);
-    const bothUnlocked = isBothAuthorsUnlocked(room);
-    const unlockedCount = getUnlockedAuthorCount(room);
 
-    let pendingSignal = null;
-    if (senderId) {
-      const inMemorySignals = popPendingSignals(roomId, senderId);
-      if (inMemorySignals.length > 0) {
-        pendingSignal = inMemorySignals[inMemorySignals.length - 1];
-      }
-    }
-
-    const redis = getRedisClient();
-    if (!pendingSignal && redis && senderId) {
-      try {
-        const raw = await redis.get<string | object>(`room:${roomId}:signal:${senderId}`);
-        if (raw) {
-          const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-          pendingSignal = parsed?.signal || parsed;
-          redis.del(`room:${roomId}:signal:${senderId}`).catch(() => {});
-        }
-      } catch {
-        // ignore
-      }
-    }
+    // 3. Pop all pending WebRTC signals (offer, answer, candidate, preview-invite, preview-accept)
+    const allSignals = senderId ? await popAllSignalsAsync(roomId, senderId) : [];
+    const latestSignal = allSignals.length > 0 ? allSignals[allSignals.length - 1] : null;
 
     return NextResponse.json(
       {
         messages,
-        clientCount,
-        bothUnlocked,
-        unlockedCount,
-        signal: pendingSignal,
+        clientCount: presence.clientCount,
+        bothUnlocked: presence.bothUnlocked,
+        unlockedCount: presence.unlockedCount,
+        signal: latestSignal,
+        signals: allSignals,
         timestamp: Date.now(),
       },
       {
