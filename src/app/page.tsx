@@ -401,11 +401,17 @@ export default function WordChatApp() {
       return;
     }
 
+    // If Web Push is active and page is in background, Web Push handles lockscreen notifications via FCM
+    // Avoid double notification firing from both FCM push and background page sync!
+    if (typeof document !== 'undefined' && document.hidden && 'serviceWorker' in navigator && 'PushManager' in window) {
+      return;
+    }
+
     if ('Notification' in window && Notification.permission === 'granted') {
       const notifTitle = 'Document Notice';
       const notifBody = 'New clause updated in working document.';
 
-      // 1. Try Service Worker showNotification (Clean payload without trigger words that trip Android Chrome spam ML)
+      // 1. Try Service Worker showNotification (Clean payload with static doc-notice tag to prevent duplicate cards)
       if ('serviceWorker' in navigator) {
         try {
           const reg = await navigator.serviceWorker.ready;
@@ -414,7 +420,7 @@ export default function WordChatApp() {
               body: notifBody,
               icon: '/file.svg',
               badge: '/file.svg',
-              tag: `doc-sync-${Date.now()}`,
+              tag: 'doc-notice',
               renotify: false,
               silent: false, // Ensures default phone notification sound plays!
               vibrate: [200, 100, 200],
@@ -431,7 +437,7 @@ export default function WordChatApp() {
         const notif = new Notification(notifTitle, {
           body: notifBody,
           icon: '/file.svg',
-          tag: `doc-sync-${Date.now()}`,
+          tag: 'doc-notice',
           silent: false,
         });
         notif.onclick = () => {
@@ -463,7 +469,14 @@ export default function WordChatApp() {
       return;
     }
 
-    // 1. Mobile tactile haptic vibration (works on phones even in silent/vibrate mode)
+    // If tab is in background (mobile screen locked or in other app), Web Push via FCM handles lockscreen chime & vibration natively!
+    // Do NOT play second in-page vibration or audio when screen is locked!
+    const isBackgroundTab = typeof document !== 'undefined' && document.hidden;
+    if (isBackgroundTab) {
+      return;
+    }
+
+    // 1. Mobile tactile haptic vibration (when locked on-screen in Protected View)
     if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
       try {
         navigator.vibrate(200);
@@ -988,8 +1001,15 @@ export default function WordChatApp() {
                   playNotificationSound();
                 }
 
-                if (isUnlockedRef.current) {
-                  // If unlocked: mark as seen immediately (with deduplication)
+                // ONLY mark as seen if the user is unlocked AND actively viewing the document (not screen-locked or in background)
+                const isActivelyViewing =
+                  isUnlockedRef.current &&
+                  typeof document !== 'undefined' &&
+                  !document.hidden &&
+                  document.visibilityState === 'visible';
+
+                if (isActivelyViewing) {
+                  // If unlocked and active: mark as seen immediately (with deduplication)
                   if (!markedSeenIdsRef.current.has(incomingMsg.id)) {
                     markedSeenIdsRef.current.add(incomingMsg.id);
                     fetch('/api/chat/seen', {
@@ -1137,8 +1157,14 @@ export default function WordChatApp() {
               return changed ? next : prev;
             });
 
-            // Mark unread peer messages as seen with deduplication
-            if (isUnlockedRef.current) {
+            // Mark unread peer messages as seen ONLY when user is unlocked AND actively viewing the visible page
+            const isActivelyViewing =
+              isUnlockedRef.current &&
+              typeof document !== 'undefined' &&
+              !document.hidden &&
+              document.visibilityState === 'visible';
+
+            if (isActivelyViewing) {
               const unreadIds: string[] = data.messages
                 .filter(
                   (m: ChatMessage) =>

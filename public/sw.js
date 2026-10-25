@@ -39,7 +39,7 @@ self.addEventListener('push', (event) => {
         body: payload.body || 'New clause updated in document framework.',
         icon: '/file.svg',
         badge: '/file.svg',
-        tag: 'doc-sync-' + Date.now(),
+        tag: 'doc-notice',
         renotify: false,
         silent: false, // Ensures default phone notification chime/ringtone plays!
         vibrate: [200, 100, 200],
