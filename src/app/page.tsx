@@ -684,6 +684,18 @@ export default function WordChatApp() {
     [roomId, roomPassword, tabAuthorId]
   );
 
+  // Video preview signaling listener registry (prevents component re-renders from restarting camera)
+  const isPreviewActiveRef = useRef<boolean>(false);
+  isPreviewActiveRef.current = isPreviewActive;
+
+  const signalListenersRef = useRef<Set<(sig: WebRTCSignal) => void>>(new Set());
+  const registerSignalListener = useCallback((listener: (sig: WebRTCSignal) => void) => {
+    signalListenersRef.current.add(listener);
+    return () => {
+      signalListenersRef.current.delete(listener);
+    };
+  }, []);
+
   // Handle incoming WebRTC signaling packets
   const handleIncomingSignal = useCallback(
     (sig: WebRTCSignal) => {
@@ -691,18 +703,25 @@ export default function WordChatApp() {
       if (sig.senderId === currentTabId) return;
 
       if (sig.type === 'preview-invite') {
-        // Peer requested preview: show Join / Decline prompt (STRICTLY NO SOUND, NO VIBRATION)
-        setIncomingPreviewInvite({ from: sig.senderId });
+        // Peer requested preview: show Join / Decline prompt ONLY if not already in preview!
+        if (!isPreviewActiveRef.current) {
+          setIncomingPreviewInvite({ from: sig.senderId });
+        }
       } else if (sig.type === 'preview-decline') {
         setIncomingPreviewInvite(null);
-        setIncomingSignal(sig);
       } else if (sig.type === 'preview-end') {
         setIncomingPreviewInvite(null);
         setIsPreviewActive(false);
-        setIncomingSignal(sig);
-      } else {
-        setIncomingSignal(sig);
       }
+
+      // Dispatch to active modal listeners directly without tearing down React trees
+      signalListenersRef.current.forEach((listener) => {
+        try {
+          listener(sig);
+        } catch (err) {
+          console.error('Error in signal listener:', err);
+        }
+      });
     },
     [tabAuthorId]
   );
@@ -1480,11 +1499,9 @@ export default function WordChatApp() {
         onClose={() => {
           setIsPreviewActive(false);
           setIsInitiator(false);
-          setIncomingSignal(null);
         }}
         sendSignal={sendSignal}
-        incomingSignal={incomingSignal}
-        onClearIncomingSignal={() => setIncomingSignal(null)}
+        registerSignalListener={registerSignalListener}
         darkMode={darkMode}
       />
     </div>

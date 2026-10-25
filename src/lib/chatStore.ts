@@ -584,10 +584,11 @@ export function broadcastSignal(
   const targetAuthor =
     signal.targetId || (signal.senderId === 'author-2' ? 'author-1' : 'author-2');
 
-  // Buffer in memory for targetAuthor so polling or delayed SSE pick it up
-  if (signal.type === 'preview-end' || signal.type === 'preview-decline') {
+  // Buffer in memory ONLY for persistent preview-invite so polling or delayed SSE pick it up.
+  // Ephemeral SDP WebRTC handshakes (offer, answer, candidate) are strictly live SSE streams.
+  if (signal.type === 'preview-end' || signal.type === 'preview-decline' || signal.type === 'preview-accept') {
     clearPendingSignals(roomId);
-  } else {
+  } else if (signal.type === 'preview-invite') {
     queuePendingSignal(roomId, targetAuthor, fullSignal);
   }
 
@@ -612,13 +613,13 @@ export function broadcastSignal(
 
   deadIds.forEach((id) => room.clients.delete(id));
 
-  // Also buffer in Redis with 25s TTL for cross-container serverless fallback
+  // Also buffer in Redis only for preview-invite with 25s TTL for cross-container serverless fallback
   const redis = getRedisClient();
   if (redis) {
-    if (signal.type === 'preview-end' || signal.type === 'preview-decline') {
+    if (signal.type === 'preview-end' || signal.type === 'preview-decline' || signal.type === 'preview-accept') {
       redis.del(`room:${roomId}:signal:${targetAuthor}`).catch(() => {});
       redis.del(`room:${roomId}:signal:${signal.senderId}`).catch(() => {});
-    } else {
+    } else if (signal.type === 'preview-invite') {
       redis.set(`room:${roomId}:signal:${targetAuthor}`, payload, { ex: 25 }).catch(() => {});
     }
   }

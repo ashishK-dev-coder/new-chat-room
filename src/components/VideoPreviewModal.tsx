@@ -21,8 +21,7 @@ interface VideoPreviewModalProps {
   roomId: string;
   onClose: () => void;
   sendSignal: (type: WebRTCSignal['type'], data?: unknown) => Promise<void>;
-  incomingSignal: WebRTCSignal | null;
-  onClearIncomingSignal: () => void;
+  registerSignalListener: (listener: (sig: WebRTCSignal) => void) => () => void;
   darkMode?: boolean;
 }
 
@@ -31,7 +30,10 @@ const RTC_CONFIG: RTCConfiguration = {
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
   ],
+  iceCandidatePoolSize: 10,
 };
 
 export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
@@ -41,8 +43,7 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
   peerAuthorName,
   onClose,
   sendSignal,
-  incomingSignal,
-  onClearIncomingSignal,
+  registerSignalListener,
   darkMode = false,
 }) => {
   const [status, setStatusState] = useState<'requesting' | 'connecting' | 'connected' | 'ended' | 'error'>(
@@ -53,6 +54,7 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
     statusRef.current = s;
     setStatusState(s);
   }, []);
+
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [isFullScreen, setIsFullScreen] = useState(false);
@@ -63,6 +65,17 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const isCleaningUpRef = useRef<boolean>(false);
   const iceCandidatesQueueRef = useRef<RTCIceCandidateInit[]>([]);
+  const hasCreatedOfferRef = useRef<boolean>(false);
+  const hasAnsweredRef = useRef<boolean>(false);
+
+  const sendSignalRef = useRef(sendSignal);
+  sendSignalRef.current = sendSignal;
+
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  const isInitiatorRef = useRef(isInitiator);
+  isInitiatorRef.current = isInitiator;
 
   // Safely stop all hardware camera tracks and close connection
   const stopAllMedia = useCallback(() => {
@@ -102,16 +115,16 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
 
   const handleEndPreview = useCallback(() => {
     try {
-      sendSignal('preview-end');
+      sendSignalRef.current('preview-end');
     } catch {
       // ignore
     }
     stopAllMedia();
-    onClose();
-  }, [sendSignal, stopAllMedia, onClose]);
+    onCloseRef.current();
+  }, [stopAllMedia]);
 
   // Start local camera (video only, STRICTLY audio: false)
-  const startCamera = useCallback(async (): Promise<MediaStream | null> => {
+  const startCamera = useCallback(async (mode: 'user' | 'environment'): Promise<MediaStream | null> => {
     try {
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());
@@ -123,7 +136,7 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
           width: { ideal: 640, max: 1280 },
           height: { ideal: 480, max: 720 },
           frameRate: { ideal: 24, max: 30 },
-          facingMode: facingMode,
+          facingMode: mode,
         },
         audio: false, // NO sound or microphone
       });
@@ -131,6 +144,8 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
       localStreamRef.current = stream;
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream;
+        localVideoRef.current.muted = true;
+        localVideoRef.current.playsInline = true;
         localVideoRef.current.play().catch(() => {});
       }
       return stream;
@@ -140,7 +155,7 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
       setStatus('error');
       return null;
     }
-  }, [facingMode]);
+  }, [setStatus]);
 
   // Initialize WebRTC Peer Connection
   const initPeerConnection = useCallback((stream: MediaStream) => {
@@ -162,9 +177,14 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
 
     // Handle remote track
     pc.ontrack = (event) => {
-      if (remoteVideoRef.current && event.streams && event.streams[0]) {
-        remoteVideoRef.current.srcObject = event.streams[0];
-        remoteVideoRef.current.play().catch(() => {});
+      if (event.streams && event.streams[0]) {
+        const remoteStream = event.streams[0];
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.srcObject = remoteStream;
+          remoteVideoRef.current.muted = true;
+          remoteVideoRef.current.playsInline = true;
+          remoteVideoRef.current.play().catch(() => {});
+        }
         setStatus('connected');
       }
     };
@@ -172,40 +192,121 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
     // Handle ICE candidates
     pc.onicecandidate = (event) => {
       if (event.candidate) {
-        sendSignal('candidate', event.candidate.toJSON());
+        sendSignalRef.current('candidate', event.candidate.toJSON());
       }
     };
 
     pc.oniceconnectionstatechange = () => {
-      if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+      const state = pc.iceConnectionState;
+      if (state === 'connected' || state === 'completed') {
         setStatus('connected');
-      } else if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+      } else if (state === 'failed') {
         setStatus('ended');
       }
     };
 
     return pc;
-  }, [sendSignal]);
+  }, [setStatus]);
 
-  // Main lifecycle: mount and start camera
+  // Direct signal processor
+  const processSignal = useCallback(async (sig: WebRTCSignal) => {
+    const pc = pcRef.current;
+    if (!pc) return;
+    const { type, data } = sig;
+
+    try {
+      if (type === 'preview-accept') {
+        // Peer accepted our invite! Offerer creates SDP offer
+        if (isInitiatorRef.current && pc.signalingState === 'stable' && !hasCreatedOfferRef.current) {
+          hasCreatedOfferRef.current = true;
+          setStatus('connecting');
+          const offer = await pc.createOffer({
+            offerToReceiveVideo: true,
+            offerToReceiveAudio: false,
+          });
+          await pc.setLocalDescription(offer);
+          await sendSignalRef.current('offer', offer);
+        }
+      } else if (type === 'offer') {
+        // Peer sent offer: set remote description and create answer
+        if (!isInitiatorRef.current && pc.signalingState === 'stable' && !hasAnsweredRef.current) {
+          hasAnsweredRef.current = true;
+          setStatus('connecting');
+          const sessionDesc = new RTCSessionDescription(data as RTCSessionDescriptionInit);
+          await pc.setRemoteDescription(sessionDesc);
+
+          // Drain queued ICE candidates
+          while (iceCandidatesQueueRef.current.length > 0) {
+            const cand = iceCandidatesQueueRef.current.shift();
+            if (cand) {
+              await pc.addIceCandidate(new RTCIceCandidate(cand)).catch(() => {});
+            }
+          }
+
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          await sendSignalRef.current('answer', answer);
+        }
+      } else if (type === 'answer') {
+        // Initiator received answer: set remote description
+        if (isInitiatorRef.current && pc.signalingState === 'have-local-offer') {
+          const sessionDesc = new RTCSessionDescription(data as RTCSessionDescriptionInit);
+          await pc.setRemoteDescription(sessionDesc);
+
+          // Drain queued ICE candidates
+          while (iceCandidatesQueueRef.current.length > 0) {
+            const cand = iceCandidatesQueueRef.current.shift();
+            if (cand) {
+              await pc.addIceCandidate(new RTCIceCandidate(cand)).catch(() => {});
+            }
+          }
+        }
+      } else if (type === 'candidate') {
+        if (data) {
+          const candInit = data as RTCIceCandidateInit;
+          if (pc.remoteDescription && pc.remoteDescription.type) {
+            await pc.addIceCandidate(new RTCIceCandidate(candInit)).catch(() => {});
+          } else {
+            iceCandidatesQueueRef.current.push(candInit);
+          }
+        }
+      } else if (type === 'preview-decline' || type === 'preview-end') {
+        stopAllMedia();
+        onCloseRef.current();
+      }
+    } catch (err) {
+      console.error('Error processing WebRTC signal:', err);
+    }
+  }, [setStatus, stopAllMedia]);
+
+  // Main lifecycle: starts camera once on open and tears down strictly on close
   useEffect(() => {
     if (!isOpen) return;
+
     isCleaningUpRef.current = false;
+    hasCreatedOfferRef.current = false;
+    hasAnsweredRef.current = false;
     iceCandidatesQueueRef.current = [];
 
     let isMounted = true;
     let inviteInterval: NodeJS.Timeout | null = null;
 
+    // Direct listener registration (no React tree re-renders or camera restarts)
+    const unregisterListener = registerSignalListener((sig) => {
+      if (isMounted) {
+        processSignal(sig);
+      }
+    });
+
     const setup = async () => {
-      const stream = await startCamera();
+      const stream = await startCamera(facingMode);
       if (!stream || !isMounted) return;
 
       const pc = initPeerConnection(stream);
 
-      if (isInitiator) {
+      if (isInitiatorRef.current) {
         setStatus('requesting');
-        // Send preview invite to peer immediately
-        await sendSignal('preview-invite');
+        await sendSignalRef.current('preview-invite');
 
         // Re-send preview-invite every 2.5s (up to 12 times = 30s) while waiting for peer response
         let retries = 0;
@@ -215,15 +316,14 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
             return;
           }
           retries++;
-          sendSignal('preview-invite').catch(() => {});
+          sendSignalRef.current('preview-invite').catch(() => {});
         }, 2500);
       } else {
         setStatus('connecting');
-        // Joining: notify initiator we accepted
-        await sendSignal('preview-accept');
+        await sendSignalRef.current('preview-accept');
       }
 
-      // Flush any queued ICE candidates once remote desc is ready
+      // Flush any queued ICE candidates if remote desc ready
       if (pc.remoteDescription) {
         while (iceCandidatesQueueRef.current.length > 0) {
           const candidate = iceCandidatesQueueRef.current.shift();
@@ -249,87 +349,24 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
       if (inviteInterval) {
         clearInterval(inviteInterval);
       }
+      unregisterListener();
       window.removeEventListener('keydown', handleKeyDown);
       stopAllMedia();
     };
-  }, [isOpen, isInitiator, startCamera, initPeerConnection, sendSignal, stopAllMedia, handleEndPreview, setStatus]);
+  }, [isOpen]); // STABLE: strictly depends only on isOpen!
 
-  // Handle incoming signaling messages from peer
-  useEffect(() => {
-    if (!isOpen || !incomingSignal) return;
-
-    const { type, data } = incomingSignal;
-    const pc = pcRef.current;
-
-    const handleSignal = async () => {
-      try {
-        if (type === 'preview-accept') {
-          // Peer accepted our invite! We are the offerer: create SDP offer
-          if (pc && isInitiator) {
-            setStatus('connecting');
-            const offer = await pc.createOffer({
-              offerToReceiveVideo: true,
-              offerToReceiveAudio: false,
-            });
-            await pc.setLocalDescription(offer);
-            await sendSignal('offer', offer);
-          }
-        } else if (type === 'offer') {
-          // Received offer from initiator: set remote description and create answer
-          if (pc && data) {
-            setStatus('connecting');
-            const sessionDesc = new RTCSessionDescription(data as RTCSessionDescriptionInit);
-            await pc.setRemoteDescription(sessionDesc);
-
-            // Drain queued ICE candidates
-            while (iceCandidatesQueueRef.current.length > 0) {
-              const cand = iceCandidatesQueueRef.current.shift();
-              if (cand) await pc.addIceCandidate(new RTCIceCandidate(cand)).catch(() => {});
-            }
-
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-            await sendSignal('answer', answer);
-          }
-        } else if (type === 'answer') {
-          // Initiator received answer from peer
-          if (pc && data) {
-            const sessionDesc = new RTCSessionDescription(data as RTCSessionDescriptionInit);
-            await pc.setRemoteDescription(sessionDesc);
-
-            // Drain queued ICE candidates
-            while (iceCandidatesQueueRef.current.length > 0) {
-              const cand = iceCandidatesQueueRef.current.shift();
-              if (cand) await pc.addIceCandidate(new RTCIceCandidate(cand)).catch(() => {});
-            }
-          }
-        } else if (type === 'candidate') {
-          if (data) {
-            const candInit = data as RTCIceCandidateInit;
-            if (pc && pc.remoteDescription && pc.remoteDescription.type) {
-              await pc.addIceCandidate(new RTCIceCandidate(candInit)).catch(() => {});
-            } else {
-              iceCandidatesQueueRef.current.push(candInit);
-            }
-          }
-        } else if (type === 'preview-decline' || type === 'preview-end') {
-          // Peer declined or ended preview
-          stopAllMedia();
-          onClose();
-        }
-      } catch (err) {
-        console.error('Error handling WebRTC signal:', err);
-      } finally {
-        onClearIncomingSignal();
+  // Flip mobile camera (front vs back) using seamless replaceTrack without renegotiation
+  const toggleFacingMode = async () => {
+    const nextMode = facingMode === 'user' ? 'environment' : 'user';
+    setFacingMode(nextMode);
+    const newStream = await startCamera(nextMode);
+    if (newStream && pcRef.current) {
+      const newTrack = newStream.getVideoTracks()[0];
+      const sender = pcRef.current.getSenders().find((s) => s.track?.kind === 'video');
+      if (sender && newTrack) {
+        sender.replaceTrack(newTrack).catch(() => {});
       }
-    };
-
-    handleSignal();
-  }, [incomingSignal, isOpen, isInitiator, sendSignal, onClearIncomingSignal, stopAllMedia, onClose]);
-
-  // Flip mobile camera (front vs back)
-  const toggleFacingMode = () => {
-    setFacingMode((prev) => (prev === 'user' ? 'environment' : 'user'));
+    }
   };
 
   if (!isOpen) return null;
