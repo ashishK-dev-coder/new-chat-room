@@ -66,17 +66,14 @@ export const WordStatusBar: React.FC<WordStatusBarProps> = ({
               onSwitchAuthorRole(currentAuthorId === 'author-2' ? 'author-1' : 'author-2');
             }
           }}
-          title="Click to switch author role between Author 1 and Author 2"
+          title="Track Changes status"
           className="flex items-center space-x-1 hover:bg-white/20 px-1.5 py-0.5 rounded transition cursor-pointer text-white/90"
         >
-          <span className="hidden sm:inline">Role:</span>
-          <span className="font-semibold text-white underline decoration-white/40">
-            {currentAuthorId === 'author-2' ? 'Author 2' : 'Author 1'}
-          </span>
+          <span className="hidden sm:inline">Track Changes:</span>
           {isUnlocked ? (
-            <span className="text-[10px] text-emerald-300 font-medium">(Active)</span>
+            <span className="font-semibold text-white">Reviewing</span>
           ) : (
-            <span className="text-[10px] text-white/60">(Protected)</span>
+            <span className="text-white/70">Protected</span>
           )}
         </button>
       </div>

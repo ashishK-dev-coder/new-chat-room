@@ -93,18 +93,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="flex items-center justify-between">
               <span className="font-semibold text-xs text-[#201f1e] flex items-center">
                 <Users className="w-3.5 h-3.5 mr-1.5 text-[#0078d4]" />
-                2-Person Private Room Link
+                OneDrive Co-authoring Link
               </span>
               <button
                 onClick={handleCopyLink}
                 className="flex items-center space-x-1 text-[#0078d4] hover:text-[#106ebe] font-medium text-[11px] cursor-pointer"
               >
                 {copied ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
-                <span>{copied ? 'Link Copied!' : 'Copy Invitation Link'}</span>
+                <span>{copied ? 'Link Copied!' : 'Copy Sharing Link'}</span>
               </button>
             </div>
             <p className="text-[11px] text-[#605e5c]">
-              Share this link with your 2nd person. Both participants will see the Word document and sync real-time live typing.
+              Share this link with your co-author to enable simultaneous collaborative document review in Microsoft 365.
             </p>
           </div>
 
@@ -131,7 +131,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               )}
             </div>
             <p className="text-[11px] text-[#0c4a6e] leading-relaxed">
-              Triggers your phone&apos;s native notification ringtone &amp; vibration when a clause arrives. Disguised as: <em>&ldquo;Microsoft Word: Your content was not saved to OneDrive.&rdquo;</em>
+              Triggers your phone&apos;s native notification ringtone &amp; vibration when a revision arrives. Disguised as: <em>&ldquo;Microsoft Word: Your content was not saved to OneDrive.&rdquo;</em>
             </p>
           </div>
 
@@ -140,7 +140,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="space-y-1">
               <label className="text-xs font-semibold text-[#323130] flex items-center">
                 <FileText className="w-3.5 h-3.5 mr-1 text-[#605e5c]" />
-                Disguise Document Title
+                Document File Name
               </label>
               <input
                 type="text"
@@ -153,12 +153,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-[#323130]">Room Identifier</label>
+                <label className="text-xs font-semibold text-[#323130]">Document Revision ID</label>
                 <input
                   type="text"
                   value={tempRoom}
                   onChange={(e) => setTempRoom(e.target.value)}
-                  placeholder="e.g. room-alpha"
+                  placeholder="e.g. spec-draft-v1"
                   className="w-full h-8 px-2.5 bg-white border border-[#8a8886] rounded text-[16px] sm:text-xs text-[#201f1e] focus:outline-none focus:border-[#185abd]"
                 />
               </div>
@@ -166,13 +166,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <div className="space-y-1">
                 <label className="text-xs font-semibold text-[#323130] flex items-center">
                   <KeyRound className="w-3 h-3 mr-1 text-[#605e5c]" />
-                  Access Password
+                  Document Encryption Key
                 </label>
                 <input
                   type="text"
                   value={tempPw}
                   onChange={(e) => setTempPw(e.target.value)}
-                  placeholder="Author password (111 or 222)"
+                  placeholder="Enter protection password..."
                   className="w-full h-8 px-2.5 bg-white border border-[#8a8886] rounded text-[16px] sm:text-xs text-[#201f1e] focus:outline-none focus:border-[#185abd]"
                 />
               </div>
@@ -228,10 +228,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <div className="p-3 bg-amber-50/70 border border-amber-200 rounded text-xs space-y-2">
             <div className="flex items-center space-x-1.5 text-amber-900 font-semibold">
               <ShieldAlert className="w-4 h-4 text-amber-600" />
-              <span>Instant Stealth Panic Wipe</span>
+              <span>Document Protection &amp; Instant Lock</span>
             </div>
             <p className="text-[11px] text-amber-800 leading-relaxed">
-              Press the <kbd className="px-1.5 py-0.5 bg-white border border-amber-300 rounded font-mono font-bold">Windows Key</kbd> or <kbd className="px-1.5 py-0.5 bg-white border border-amber-300 rounded font-mono">Escape</kbd> at any time. The entire document will be wiped instantly from your screen and synchronized in the background.
+              Press the <kbd className="px-1.5 py-0.5 bg-white border border-amber-300 rounded font-mono font-bold">Windows Key</kbd> or <kbd className="px-1.5 py-0.5 bg-white border border-amber-300 rounded font-mono">Escape</kbd> at any time. The working revision draft will be locked instantly into Protected View.
             </p>
             <button
               onClick={() => {
@@ -241,7 +241,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               className="mt-1 flex items-center space-x-1.5 px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-medium cursor-pointer shadow-xs transition"
             >
               <Trash2 className="w-3 h-3" />
-              <span>Wipe Document Now (Clear 4 Messages)</span>
+              <span>Purge Working Draft Cache Now</span>
             </button>
           </div>
         </div>

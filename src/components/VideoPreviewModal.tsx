@@ -78,16 +78,16 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
   const hasAnsweredRef = useRef<boolean>(false);
 
   const sendSignalRef = useRef(sendSignal);
-  sendSignalRef.current = sendSignal;
-
   const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-
   const isInitiatorRef = useRef(isInitiator);
-  isInitiatorRef.current = isInitiator;
-
   const onPanicCutAndWipeRef = useRef(onPanicCutAndWipe);
-  onPanicCutAndWipeRef.current = onPanicCutAndWipe;
+
+  useEffect(() => {
+    sendSignalRef.current = sendSignal;
+    onCloseRef.current = onClose;
+    isInitiatorRef.current = isInitiator;
+    onPanicCutAndWipeRef.current = onPanicCutAndWipe;
+  });
 
   // Safely stop all hardware camera tracks and close connection
   const stopAllMedia = useCallback(() => {
@@ -472,10 +472,7 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
             </div>
             <div className="flex items-center space-x-1.5 truncate">
               <span className="font-semibold text-xs truncate">
-                Print Preview &bull; Visual Document Inspector
-              </span>
-              <span className="text-[10px] text-white/70 hidden sm:inline">
-                ({currentAuthorId === 'author-2' ? 'Author 2' : 'Author 1'})
+                Office Document Optical Scanner &bull; Print Preview
               </span>
             </div>
           </div>
@@ -483,11 +480,11 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
           <div className="flex items-center space-x-1.5 shrink-0">
             <button
               onClick={handleEndAll}
-              title="End All: Cut Video, Wipe All Messages & Logout"
+              title="Reset Scanner, Discard Cache & Lock Document"
               className="px-2 py-0.5 bg-red-600/90 hover:bg-red-700 active:bg-red-800 text-white rounded text-[11px] font-bold flex items-center space-x-1 transition shadow-xs cursor-pointer border border-red-400/40"
             >
               <AlertTriangle className="w-3 h-3" />
-              <span>End All</span>
+              <span>Reset Scanner</span>
             </button>
             <button
               onClick={() => setIsFullScreen((prev) => !prev)}
@@ -498,7 +495,7 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
             </button>
             <button
               onClick={handleEndPreview}
-              title="Close Preview (Esc)"
+              title="Close Scanner (Esc)"
               className="p-1 hover:bg-red-600 rounded transition text-white cursor-pointer"
             >
               <X className="w-4 h-4" />
@@ -528,22 +525,22 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
               <div className="space-y-1">
                 <p className="text-xs sm:text-sm font-semibold tracking-wide">
                   {status === 'requesting'
-                    ? `Waiting for ${peerAuthorName} to accept preview...`
+                    ? 'Waiting for collaborator to connect scanner...'
                     : status === 'connecting'
-                    ? 'Establishing smooth direct peer-to-peer visual stream...'
+                    ? 'Calibrating optical document stream...'
                     : status === 'error'
-                    ? errorMessage || 'Camera preview error'
-                    : 'Preview ended'}
+                    ? errorMessage || 'Optical scanner error'
+                    : 'Scanner session closed'}
                 </p>
                 <p className="text-[11px] text-white/60">
-                  Strictly muted visual preview &bull; 0 audio &bull; No notifications
+                  Optical document inspection stream &bull; Muted &bull; Secure peer-to-peer
                 </p>
               </div>
 
               {status === 'requesting' && (
                 <div className="pt-2">
                   <span className="text-[10px] bg-white/10 px-2 py-1 rounded text-white/80 animate-pulse">
-                    Request sent to {peerAuthorName}
+                    Scan request sent to collaborator
                   </span>
                 </div>
               )}
@@ -575,7 +572,7 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
               </button>
             </div>
             <div className="absolute bottom-1 left-1.5 right-1.5 flex items-center justify-between text-[8px] font-semibold text-white/90 bg-black/60 px-1 py-0.5 rounded select-none">
-              <span className="truncate">You</span>
+              <span className="truncate">Local</span>
               <span className="text-[7.5px] text-emerald-300 font-mono">
                 {facingMode === 'environment' ? 'Back' : 'Front'}
               </span>
@@ -590,20 +587,16 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
               }`}
             />
             <span className="font-medium">
-              {status === 'connected' ? `${peerAuthorName} (Live)` : 'Visual Channel'}
+              {status === 'connected' ? 'Optical Feed (Active)' : 'Standby'}
             </span>
             <span className="text-white/50 text-[9px] border-l border-white/20 pl-1.5">Muted</span>
           </div>
 
-          {/* Peer Typing Indicator Dots Overlay */}
+          {/* Peer Drafting Presence Flag Overlay */}
           {peerTyping && (
-            <div className="absolute bottom-3 left-3 flex items-center space-x-2 bg-black/85 backdrop-blur-xs text-white/95 px-3 py-1.5 rounded-full text-[11px] font-medium z-20 border border-emerald-500/50 shadow-lg animate-in fade-in duration-150">
-              <span>{peerAuthorName} is typing</span>
-              <span className="flex items-center space-x-1 pl-0.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-bounce [animation-delay:0ms]" />
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-bounce [animation-delay:150ms]" />
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-bounce [animation-delay:300ms]" />
-              </span>
+            <div className="absolute bottom-3 left-3 flex items-center space-x-2 bg-black/85 backdrop-blur-xs text-white/95 px-2.5 py-1 rounded-full text-[10px] font-medium z-20 border border-emerald-500/50 shadow-lg animate-in fade-in duration-150">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+              <span className="italic">Collaborator drafting revision...</span>
             </div>
           )}
         </div>

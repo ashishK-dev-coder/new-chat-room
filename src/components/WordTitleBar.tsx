@@ -34,7 +34,7 @@ export const WordTitleBar: React.FC<WordTitleBarProps> = ({
   docTitle,
   isUnlocked,
   participantCount,
-  currentAuthorId,
+  currentAuthorId: _currentAuthorId,
   onOpenSettings,
   onLockToggle,
   onPanic,
@@ -120,57 +120,33 @@ export const WordTitleBar: React.FC<WordTitleBarProps> = ({
           </button>
         )}
 
-        {/* Co-authoring Presence Badges (Disguised 2-Person Word Collaboration) */}
+        {/* Co-authoring Presence Badges (Authentic Microsoft 365 Word Collaboration) */}
         {(() => {
           const displayCount = Math.min(2, Math.max(1, participantCount));
           return (
             <div
-              title={`${displayCount} co-author${displayCount === 1 ? '' : 's'} active`}
+              title={displayCount > 1 ? '2 collaborators active in document' : '1 collaborator active'}
               className="flex items-center space-x-1 px-1.5 py-0.5 rounded hover:bg-white/10 transition cursor-pointer mr-1"
             >
               <div className="flex -space-x-1.5">
                 <div
-                  className={`w-5 h-5 rounded-full bg-[#0078d4] text-white text-[9px] font-bold flex items-center justify-center border ${
-                    currentAuthorId === 'author-1' ? 'border-white ring-1 ring-white/70' : 'border-[#185abd]'
-                  }`}
-                  title={`Author 1 (Online)${currentAuthorId === 'author-1' ? ' - You' : ''}`}
+                  className="w-5 h-5 rounded-full bg-[#0078d4] text-white text-[9px] font-bold flex items-center justify-center border border-white ring-1 ring-white/50"
+                  title="Collaborator (Self)"
                 >
-                  A1
+                  AK
                 </div>
-                {displayCount > 1 ? (
+                {displayCount > 1 && (
                   <div
-                    className={`w-5 h-5 rounded-full bg-[#107c41] text-white text-[9px] font-bold flex items-center justify-center border ${
-                      currentAuthorId === 'author-2' ? 'border-white ring-1 ring-white/70' : 'border-[#185abd]'
-                    }`}
-                    title={`Author 2 (Online)${currentAuthorId === 'author-2' ? ' - You' : ''}`}
+                    className="w-5 h-5 rounded-full bg-[#107c41] text-white text-[9px] font-bold flex items-center justify-center border border-white ring-1 ring-white/50"
+                    title="Collaborator (Online)"
                   >
-                    A2
-                  </div>
-                ) : (
-                  <div
-                    className="w-5 h-5 rounded-full bg-white/20 text-white/60 text-[8px] font-medium flex items-center justify-center border border-white/20"
-                    title="Waiting for Author 2..."
-                  >
-                    +
+                    RD
                   </div>
                 )}
               </div>
-              {isUnlocked && currentAuthorId ? (
-                <span
-                  className={`text-[9.5px] font-bold px-1.5 py-0.2 rounded shadow-xs select-none ml-1 ${
-                    currentAuthorId === 'author-2'
-                      ? 'bg-[#107c41] text-white ring-1 ring-white/40'
-                      : 'bg-[#0078d4] text-white ring-1 ring-white/40'
-                  }`}
-                  title={currentAuthorId === 'author-2' ? 'Logged in as Author 2' : 'Logged in as Author 1'}
-                >
-                  {currentAuthorId === 'author-2' ? 'You: A2' : 'You: A1'}
-                </span>
-              ) : (
-                <span className="text-[10px] text-white/90 ml-1 font-medium select-none">
-                  {displayCount === 2 ? '2 Authors' : '1 Author'}
-                </span>
-              )}
+              <span className="text-[10px] text-white/90 ml-1 font-medium select-none hidden sm:inline">
+                {displayCount > 1 ? 'Shared' : 'Editing'}
+              </span>
             </div>
           );
         })()}

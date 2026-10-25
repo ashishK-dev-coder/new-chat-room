@@ -476,7 +476,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                   <span className={`text-[8.5pt] font-mono select-none hidden sm:inline ${
                     darkMode ? 'text-[#34d399]' : 'text-[#107c41]'
                   }`}>
-                    Live Working Clauses ({displayedMessages.length}/4)
+                    Live Revision Draft
                   </span>
                 )}
               </div>
@@ -525,7 +525,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                             </div>
                           )}
 
-                          {/* Clause Paragraph Header: Author Tag on left, Timestamp & Status on right */}
+                          {/* Clause Paragraph Header: Co-author Tag on left, Timestamp & Tick Status on right */}
                           <div className="flex items-center justify-between gap-1 mb-1 select-none">
                             <span className={`font-semibold text-[8.5pt] sm:text-[9.5pt] tracking-tight ${
                               isSelf
@@ -536,9 +536,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                                 ? 'text-[#34d399]'
                                 : 'text-[#107c41]'
                             }`}>
-                              • {clauseNum} [{isSelf
-                                ? `You (${msg.senderName || (currentUserId === 'author-2' ? 'Author 2' : 'Author 1')})`
-                                : (msg.senderName || (msg.senderId === 'author-2' ? 'Author 2' : 'Author 1'))}]:
+                              • {clauseNum} [{isSelf ? 'AK (Self)' : 'RD (Reviewer)'}]:
                             </span>
 
                             <div className="flex items-center space-x-1.5 shrink-0">
@@ -551,20 +549,15 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                                 </span>
                               )}
 
-                              {/* Single tick for sent, Double blue tick for seen (shown on self messages) */}
+                              {/* Clean Tick Status: Single tick for synced, Double tick for reviewed (no chat text) */}
                               {isSelf && (
-                                <>
+                                <div className="inline-flex items-center">
                                   {msg.status === 'pending' ? (
                                     <span
-                                      className={`inline-flex items-center space-x-0.5 font-mono px-1 py-0.5 rounded tracking-tight transition-all ${
-                                        darkMode
-                                          ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
-                                          : 'bg-amber-50 text-amber-700 border border-amber-200'
-                                      }`}
-                                      title="Sending clause... Going"
+                                      className="inline-flex items-center text-amber-500 p-0.5"
+                                      title="Syncing amendment..."
                                     >
                                       <Clock className="w-2.5 h-2.5 animate-spin" style={{ animationDuration: '2.5s' }} />
-                                      <span className="text-[6.5pt] sm:text-[7pt]">going...</span>
                                     </span>
                                   ) : msg.status === 'failed' ? (
                                     <button
@@ -573,42 +566,27 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                                         e.stopPropagation();
                                         onSendMessage(msg.text, msg.replyTo);
                                       }}
-                                      className={`inline-flex items-center space-x-1 px-1.5 py-0.5 rounded cursor-pointer transition-all ${
-                                        darkMode
-                                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40 hover:bg-rose-500/30'
-                                          : 'bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100'
-                                      }`}
-                                      title="Delivery failed. Click to retry"
+                                      className="inline-flex items-center text-rose-500 hover:text-rose-600 p-0.5 cursor-pointer"
+                                      title="Sync failed - Click to retry"
                                     >
-                                      <AlertCircle className="w-2.5 h-2.5" />
-                                      <span className="text-[6.5pt] sm:text-[7pt]">failed (retry)</span>
+                                      <AlertCircle className="w-3 h-3" />
                                     </button>
                                   ) : msg.status === 'seen' ? (
                                     <span
-                                      className={`inline-flex items-center space-x-0.5 px-1 py-0.5 rounded font-medium transition-all ${
-                                        darkMode
-                                          ? 'text-[#4ba3f4] bg-[#4ba3f4]/15 border border-[#4ba3f4]/30'
-                                          : 'text-[#0078d4] bg-[#f0f9ff] border border-[#0078d4]/30'
-                                      }`}
-                                      title="Seen by co-author"
+                                      className="inline-flex items-center text-[#0078d4] dark:text-[#4ba3f4] p-0.5"
+                                      title={`Reviewed by co-author • ${formatMessageTime(msg.seenAt || msg.timestamp)}`}
                                     >
-                                      <CheckCheck className="w-3 h-3 stroke-[2.4]" />
-                                      <span className="font-semibold text-[6.5pt] sm:text-[7pt] tracking-tight">seen</span>
+                                      <CheckCheck className="w-3.5 h-3.5 stroke-[2.4]" />
                                     </span>
                                   ) : (
                                     <span
-                                      className={`inline-flex items-center space-x-0.5 px-1 py-0.5 rounded font-medium transition-all ${
-                                        darkMode
-                                          ? 'text-[#9ca3af] bg-white/5 border border-white/10'
-                                          : 'text-[#64748b] bg-slate-50 border border-slate-200'
-                                      }`}
-                                      title="Sent & delivered to document room"
+                                      className="inline-flex items-center text-[#64748b] dark:text-[#9ca3af] p-0.5"
+                                      title={`Synced to revision store • ${formatMessageTime(msg.timestamp)}`}
                                     >
-                                      <Check className="w-2.5 h-2.5 stroke-[2.2]" />
-                                      <span className="text-[6.5pt] sm:text-[7pt] tracking-tight">sent</span>
+                                      <Check className="w-3 h-3 stroke-[2.2]" />
                                     </span>
                                   )}
-                                </>
+                                </div>
                               )}
 
                               {/* Backward reply arrow to tag this message */}
@@ -786,28 +764,27 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
               )}
             </div>
 
-            {/* Peer Typing Indicator with animated bouncing dots */}
+            {/* Peer Typing Indicator: Authentic Word 365 Co-author Presence Flag */}
             {isUnlocked && peerTyping && (
               <div
-                className={`flex items-center space-x-2 text-[9.5pt] italic pl-3.5 sm:pl-4 border-l-2 py-0.5 ${
+                className={`flex items-center space-x-2 text-[9pt] pl-3.5 sm:pl-4 border-l-2 py-0.5 select-none animate-pulse ${
                   darkMode ? 'text-[#a1a1aa] border-[#34d399]' : 'text-[#4b5563] border-[#107c41]'
                 }`}
               >
-                <span>{currentUserId === 'author-2' ? 'Author 1' : 'Author 2'} is typing</span>
-                <span className="inline-flex items-center space-x-1 pl-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#107c41] dark:bg-[#34d399] animate-bounce [animation-delay:0ms]" />
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#107c41] dark:bg-[#34d399] animate-bounce [animation-delay:150ms]" />
-                  <span className="w-1.5 h-1.5 rounded-full bg-[#107c41] dark:bg-[#34d399] animate-bounce [animation-delay:300ms]" />
+                <span className="inline-block w-1.5 h-3 bg-[#107c41] dark:bg-[#34d399] mr-0.5 animate-ping" />
+                <span className="font-semibold text-[8pt] text-[#107c41] dark:text-[#34d399] bg-[#107c41]/10 px-1 py-0.2 rounded font-mono">
+                  {currentUserId === 'author-2' ? 'AK |' : 'RD |'}
                 </span>
+                <span className="italic text-[8.5pt]">Collaborator drafting amendment...</span>
               </div>
             )}
 
-            {/* End of Page: See preview option */}
+            {/* End of Page: Office Lens Document Scanner Preview */}
             {isUnlocked && onOpenPreview && (
               <div className="mt-5 pt-3 border-t border-dashed border-[#c8c6c4] dark:border-[#3e3e42] flex items-center justify-between select-none">
                 <div className="flex items-center space-x-1.5 text-[9pt] sm:text-[9.5pt] text-[#605e5c] dark:text-[#9ca3af]">
                   <Eye className="w-3.5 h-3.5 text-[#185abd]" />
-                  <span className="font-medium">Document Visual Preview:</span>
+                  <span className="font-medium">Office Lens &amp; Document Scanner:</span>
                 </div>
 
                 {incomingPreviewInvite ? (
@@ -819,10 +796,10 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                         onAcceptPreview?.();
                       }}
                       className="px-3 py-1 text-[9pt] sm:text-[9.5pt] font-semibold rounded bg-[#107c41] hover:bg-[#0e6b37] text-white cursor-pointer shadow-xs flex items-center space-x-1.5 animate-pulse"
-                      title="Join co-author's live visual preview"
+                      title="Open co-author's live document scanner stream"
                     >
                       <Eye className="w-3.5 h-3.5" />
-                      <span>Join Preview</span>
+                      <span>Open Scanner</span>
                     </button>
                     <button
                       type="button"
@@ -832,7 +809,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                       }}
                       className="px-2 py-1 text-[8.5pt] font-medium rounded bg-[#f3f2f1] hover:bg-[#edebe9] dark:bg-[#333] dark:hover:bg-[#444] text-[#201f1e] dark:text-[#f3f4f6] border border-[#8a8886] cursor-pointer"
                     >
-                      Decline
+                      Dismiss
                     </button>
                   </div>
                 ) : participantCount >= 2 && bothUnlocked ? (
@@ -843,23 +820,19 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                       onOpenPreview();
                     }}
                     className="px-2.5 py-1 text-[9pt] sm:text-[9.5pt] font-semibold rounded bg-[#185abd]/10 hover:bg-[#185abd]/20 text-[#185abd] dark:text-blue-300 dark:bg-blue-900/30 dark:hover:bg-blue-900/50 border border-[#185abd]/30 cursor-pointer transition-all flex items-center space-x-1.5 shadow-xs"
-                    title="Start visual preview (Both authors online & logged in)"
+                    title="Launch Optical Document Scanner"
                   >
-                    <span>See preview</span>
+                    <span>Scan Document</span>
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                   </button>
                 ) : (
                   <div
                     className="px-2 py-0.5 text-[8.5pt] text-[#a19f9d] dark:text-[#71717a] italic bg-black/5 dark:bg-white/5 rounded border border-black/5 select-none"
-                    title={
-                      participantCount < 2
-                        ? 'Visual preview requires both authors to be online'
-                        : 'Visual preview requires co-author to be logged in'
-                    }
+                    title="Document scanner requires active co-author connection"
                   >
                     {participantCount < 2
-                      ? 'See preview (Waiting for co-author to be online...)'
-                      : 'See preview (Waiting for co-author to login...)'}
+                      ? 'Document Scanner (Offline)'
+                      : 'Document Scanner (Co-author in Protected View)'}
                   </div>
                 )}
               </div>

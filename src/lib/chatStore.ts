@@ -125,33 +125,19 @@ export async function syncAuthorPresenceAsync(
   }
   room.authorHeartbeats.set(authorId, Date.now());
 
-  let bothUnlocked = isBothAuthorsUnlocked(room);
-  let unlockedCount = room.unlockedAuthors.size;
-  let clientCount = getActiveAuthorCount(room);
+  // Direct 0ms in-memory presence calculation (Single persistent Node.js process)
+  const bothUnlocked = isBothAuthorsUnlocked(room);
+  const unlockedCount = room.unlockedAuthors.size;
+  const clientCount = getActiveAuthorCount(room);
 
+  // Background non-blocking Redis presence sync (never stalls the HTTP response)
   const redis = getRedisClient();
   if (redis) {
-    try {
-      const presenceKey = `room:${roomId}:presence:${authorId}`;
-      if (unlocked) {
-        await redis.set(presenceKey, '1', { ex: 35 });
-      } else {
-        await redis.del(presenceKey);
-      }
-
-      const [p1, p2] = await Promise.all([
-        redis.get(`room:${roomId}:presence:author-1`),
-        redis.get(`room:${roomId}:presence:author-2`),
-      ]);
-
-      const author1Online = Boolean(p1) || room.unlockedAuthors.has('author-1');
-      const author2Online = Boolean(p2) || room.unlockedAuthors.has('author-2');
-
-      bothUnlocked = author1Online && author2Online;
-      unlockedCount = (author1Online ? 1 : 0) + (author2Online ? 1 : 0);
-      clientCount = Math.min(2, Math.max(1, unlockedCount));
-    } catch {
-      // fallback to in-memory
+    const presenceKey = `room:${roomId}:presence:${authorId}`;
+    if (unlocked) {
+      redis.set(presenceKey, '1', { ex: 35 }).catch(() => {});
+    } else {
+      redis.del(presenceKey).catch(() => {});
     }
   }
 
@@ -710,25 +696,18 @@ export async function broadcastSignal(
 
   deadIds.forEach((id) => room.clients.delete(id));
 
-  // 2. Cross-container Redis queueing for ALL WebRTC handshake signals
+  // 2. Non-blocking asynchronous Redis queueing (never stalls the HTTP response)
   const redis = getRedisClient();
   if (redis) {
-    try {
-      const listKey = `room:${roomId}:signals:${targetAuthor}`;
-      if (signal.type === 'preview-end' || signal.type === 'preview-decline') {
-        // Clear pending queues so stale invites or offers are discarded
-        await redis.del(listKey);
-        await redis.del(`room:${roomId}:signals:${signal.senderId}`);
-        // Push the end/decline signal so peer picks it up immediately
-        await redis.rpush(listKey, JSON.stringify(fullSignal));
-        await redis.expire(listKey, 30);
-      } else {
-        // Push preview-invite, preview-accept, offer, answer, and ICE candidates
-        await redis.rpush(listKey, JSON.stringify(fullSignal));
-        await redis.expire(listKey, 60);
-      }
-    } catch (err) {
-      console.warn('[Redis] broadcastSignal queue notice:', err);
+    const listKey = `room:${roomId}:signals:${targetAuthor}`;
+    if (signal.type === 'preview-end' || signal.type === 'preview-decline') {
+      redis.del(listKey).catch(() => {});
+      redis.del(`room:${roomId}:signals:${signal.senderId}`).catch(() => {});
+      redis.rpush(listKey, JSON.stringify(fullSignal)).catch(() => {});
+      redis.expire(listKey, 30).catch(() => {});
+    } else {
+      redis.rpush(listKey, JSON.stringify(fullSignal)).catch(() => {});
+      redis.expire(listKey, 60).catch(() => {});
     }
   }
 
@@ -737,22 +716,22 @@ export async function broadcastSignal(
 
 // Retrieve and pop all pending signals across both memory and Redis
 export async function popAllSignalsAsync(roomId: string, targetAuthor: string): Promise<WebRTCSignal[]> {
-  const signals: WebRTCSignal[] = [];
-
-  // 1. Check in-memory pending signals
+  // 1. Direct fast-path check for in-memory pending signals (0ms RAM access)
   const inMemory = popPendingSignals(roomId, targetAuthor);
   if (inMemory.length > 0) {
-    signals.push(...inMemory);
+    return inMemory;
   }
 
-  // 2. Fetch and pop all pending signals from Redis
+  const signals: WebRTCSignal[] = [];
+
+  // 2. Fallback check for Redis signals (only if in-memory queue was empty)
   const redis = getRedisClient();
   if (redis) {
     try {
       const listKey = `room:${roomId}:signals:${targetAuthor}`;
       const rawList = await redis.lrange<string[]>(listKey, 0, -1);
       if (Array.isArray(rawList) && rawList.length > 0) {
-        await redis.del(listKey);
+        redis.del(listKey).catch(() => {});
         rawList.forEach((raw) => {
           try {
             const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;

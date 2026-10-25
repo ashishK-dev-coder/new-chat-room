@@ -1213,21 +1213,34 @@ export default function WordChatApp() {
         // ignore offline sync
       } finally {
         if (isMounted) {
-          // Adaptive polling interval: During active video call or invite, poll at 650ms for instant WebRTC handshake!
+          // Render Free Tier Optimized Heartbeat:
+          // When SSE is connected, all messages, presence, and WebRTC signals arrive in 0ms over SSE.
+          // Polling acts purely as a low-CPU idle heartbeat.
           const isCallActiveOrConnecting =
             isPreviewActive || showPreviewConfirm || incomingPreviewInvite !== null;
 
-          let nextDelay = 3500;
-          if (isCallActiveOrConnecting) {
-            nextDelay = 650; // Ultra-fast 650ms polling so offer/answer/candidates exchange in < 1s
-          } else if (document.hidden) {
-            nextDelay = 15000; // Background tab: 15s
-          } else if (isSseConnectedRef.current) {
-            nextDelay = 12000; // Real-time SSE is active: 12s passive sync
-          } else if (!isUnlockedRef.current) {
-            nextDelay = 5000; // Locked Protected View: 5s
+          let nextDelay = 25000; // Default idle heartbeat: 25s
+          if (isSseConnectedRef.current) {
+            if (isCallActiveOrConnecting) {
+              nextDelay = 3000; // Fast fallback during active video scanner: 3s
+            } else if (document.hidden) {
+              nextDelay = 30000; // Background tab: 30s
+            } else if (!isUnlockedRef.current) {
+              nextDelay = 25000; // Protected view: 25s
+            } else {
+              nextDelay = 25000; // Active document with healthy SSE: 25s
+            }
           } else {
-            nextDelay = 3000; // Active chat fallback: 3s
+            // Offline / Disconnected SSE fallback mode
+            if (isCallActiveOrConnecting) {
+              nextDelay = 1200;
+            } else if (document.hidden) {
+              nextDelay = 20000;
+            } else if (!isUnlockedRef.current) {
+              nextDelay = 10000;
+            } else {
+              nextDelay = 3500;
+            }
           }
           syncTimeout = setTimeout(runSync, nextDelay);
         }
