@@ -89,7 +89,7 @@ export const PasswordModal: React.FC<PasswordModalProps> = ({
                 &lsquo;{docTitle}&rsquo; is protected.
               </p>
               <p className="text-[#605e5c] text-[11px] leading-relaxed">
-                Enter the authoring password to unprotect this document and allow technical modifications:
+                Enter Author 1 or Author 2 password to unprotect this document and enable collaborative editing:
               </p>
             </div>
           </div>

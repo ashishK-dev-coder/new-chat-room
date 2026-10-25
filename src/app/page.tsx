@@ -390,9 +390,17 @@ export default function WordChatApp() {
         setRoomId(urlRoom);
       }
 
-      const unlockedSession = sessionStorage.getItem(`word_unlocked_${urlRoom || 'default-room'}`);
-      if (unlockedSession === 'true') {
+      const activeRoom = urlRoom || 'default-room';
+      const unlockedSession = sessionStorage.getItem(`word_unlocked_${activeRoom}`);
+      const storedPwd = sessionStorage.getItem('word_tab_password');
+      const storedAuthorId = sessionStorage.getItem('word_tab_author_id');
+      if (storedAuthorId) {
+        setTabAuthorId(storedAuthorId);
+        tabAuthorIdRef.current = storedAuthorId;
+      }
+      if (unlockedSession === 'true' && storedPwd) {
         setIsUnlocked(true);
+        setRoomPassword(storedPwd);
       }
     }
   }, []);
@@ -494,6 +502,7 @@ export default function WordChatApp() {
       }
       sessionStorage.removeItem(`word_unlocked_${roomId}`);
       sessionStorage.removeItem(`word_chat_msgs_${roomId}`);
+      sessionStorage.removeItem('word_tab_password');
     }
 
     // 2. Clear state and lock to Protected View
@@ -997,13 +1006,18 @@ export default function WordChatApp() {
         setIsUnlocked(true);
         setIsFontColorBlinking(false); // Stop blinking once unlocked
         setRoomPassword(pwdAttempt);
+        const authenticatedAuthorId = data.authorId || tabAuthorId;
+        setTabAuthorId(authenticatedAuthorId);
+        tabAuthorIdRef.current = authenticatedAuthorId;
         lastActivityTime.current = Date.now();
         if (typeof window !== 'undefined') {
+          sessionStorage.setItem('word_tab_author_id', authenticatedAuthorId);
+          sessionStorage.setItem('word_tab_password', pwdAttempt);
           sessionStorage.setItem(`word_unlocked_${roomId}`, 'true');
         }
         if (data.messages) {
           setMessages(data.messages.slice(-4));
-          const activeId = tabAuthorIdRef.current || tabAuthorId;
+          const activeId = authenticatedAuthorId;
           const peerUnread = data.messages
             .filter((m: ChatMessage) => m.senderId !== activeId && m.status !== 'seen')
             .map((m: ChatMessage) => m.id);
@@ -1063,6 +1077,7 @@ export default function WordChatApp() {
         docTitle={docTitle}
         isUnlocked={isUnlocked}
         participantCount={participantCount}
+        currentAuthorId={tabAuthorId}
         onOpenSettings={() => setShowSettingsModal(true)}
         onLockToggle={handleLockToggle}
         onPanic={handlePanicLock}
@@ -1122,6 +1137,7 @@ export default function WordChatApp() {
         zoomLevel={zoomLevel}
         setZoomLevel={setZoomLevel}
         isUnlocked={isUnlocked}
+        currentAuthorId={tabAuthorId}
         darkMode={darkMode}
       />
 

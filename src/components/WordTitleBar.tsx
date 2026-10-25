@@ -21,6 +21,7 @@ interface WordTitleBarProps {
   docTitle: string;
   isUnlocked: boolean;
   participantCount: number;
+  currentAuthorId?: string;
   onOpenSettings: () => void;
   onLockToggle: () => void;
   onPanic: () => void;
@@ -33,6 +34,7 @@ export const WordTitleBar: React.FC<WordTitleBarProps> = ({
   docTitle,
   isUnlocked,
   participantCount,
+  currentAuthorId,
   onOpenSettings,
   onLockToggle,
   onPanic,
@@ -128,15 +130,19 @@ export const WordTitleBar: React.FC<WordTitleBarProps> = ({
             >
               <div className="flex -space-x-1.5">
                 <div
-                  className="w-5 h-5 rounded-full bg-[#0078d4] text-white text-[9px] font-bold flex items-center justify-center border border-[#185abd]"
-                  title="Author 1 (Online)"
+                  className={`w-5 h-5 rounded-full bg-[#0078d4] text-white text-[9px] font-bold flex items-center justify-center border ${
+                    currentAuthorId === 'author-1' ? 'border-white ring-1 ring-white/70' : 'border-[#185abd]'
+                  }`}
+                  title={`Author 1 (Online)${currentAuthorId === 'author-1' ? ' - You' : ''}`}
                 >
                   A1
                 </div>
                 {displayCount > 1 ? (
                   <div
-                    className="w-5 h-5 rounded-full bg-[#107c41] text-white text-[9px] font-bold flex items-center justify-center border border-[#185abd]"
-                    title="Author 2 (Online)"
+                    className={`w-5 h-5 rounded-full bg-[#107c41] text-white text-[9px] font-bold flex items-center justify-center border ${
+                      currentAuthorId === 'author-2' ? 'border-white ring-1 ring-white/70' : 'border-[#185abd]'
+                    }`}
+                    title={`Author 2 (Online)${currentAuthorId === 'author-2' ? ' - You' : ''}`}
                   >
                     A2
                   </div>
@@ -149,9 +155,22 @@ export const WordTitleBar: React.FC<WordTitleBarProps> = ({
                   </div>
                 )}
               </div>
-              <span className="text-[10px] text-white/90 ml-1 font-medium select-none">
-                {displayCount === 2 ? '2 Authors' : '1 Author'}
-              </span>
+              {isUnlocked && currentAuthorId ? (
+                <span
+                  className={`text-[9.5px] font-bold px-1.5 py-0.2 rounded shadow-xs select-none ml-1 ${
+                    currentAuthorId === 'author-2'
+                      ? 'bg-[#107c41] text-white ring-1 ring-white/40'
+                      : 'bg-[#0078d4] text-white ring-1 ring-white/40'
+                  }`}
+                  title={currentAuthorId === 'author-2' ? 'Logged in as Author 2' : 'Logged in as Author 1'}
+                >
+                  {currentAuthorId === 'author-2' ? 'You: A2' : 'You: A1'}
+                </span>
+              ) : (
+                <span className="text-[10px] text-white/90 ml-1 font-medium select-none">
+                  {displayCount === 2 ? '2 Authors' : '1 Author'}
+                </span>
+              )}
             </div>
           );
         })()}

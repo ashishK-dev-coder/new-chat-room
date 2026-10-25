@@ -1,19 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getRoomMessages, verifyRoomPassword } from '@/lib/chatStore';
+import { getRoomMessages, authenticateAuthor } from '@/lib/chatStore';
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const { roomId = 'default-room', password = '' } = body;
 
-    const isValid = verifyRoomPassword(roomId, password);
+    const auth = authenticateAuthor(password);
 
-    if (!isValid) {
-      return NextResponse.json({ success: false, error: 'Incorrect document password' }, { status: 401 });
+    if (!auth.valid) {
+      return NextResponse.json(
+        { success: false, error: auth.error || 'Incorrect document password' },
+        { status: 401 }
+      );
     }
 
     return NextResponse.json({
       success: true,
+      authorId: auth.authorId,
+      authorName: auth.authorName,
       messages: getRoomMessages(roomId),
     });
   } catch (err: unknown) {

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { addMessageToRoom, verifyRoomPassword } from '@/lib/chatStore';
+import { addMessageToRoom, authenticateAuthor } from '@/lib/chatStore';
 
 export async function POST(req: NextRequest) {
   try {
@@ -10,15 +10,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Message cannot be empty' }, { status: 400 });
     }
 
-    // Verify password if required
-    if (password !== undefined && !verifyRoomPassword(roomId, password)) {
-      return NextResponse.json({ error: 'Unauthorized: Invalid password' }, { status: 401 });
+    // Authenticate author by password and resolve official author identity
+    let resolvedSenderId = senderId || 'author-1';
+    let resolvedSenderName = senderName || 'Author';
+
+    if (password !== undefined) {
+      const auth = authenticateAuthor(password);
+      if (!auth.valid) {
+        return NextResponse.json({ error: 'Unauthorized: Invalid author password' }, { status: 401 });
+      }
+      resolvedSenderId = auth.authorId || resolvedSenderId;
+      resolvedSenderName = auth.authorName || resolvedSenderName;
     }
 
     const result = await addMessageToRoom(roomId, {
       id,
-      senderId: senderId || 'anonymous',
-      senderName: senderName || 'User',
+      senderId: resolvedSenderId,
+      senderName: resolvedSenderName,
       text: text.trim(),
       replyTo,
     });

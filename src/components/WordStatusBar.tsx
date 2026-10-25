@@ -16,6 +16,7 @@ interface WordStatusBarProps {
   zoomLevel: number;
   setZoomLevel: (zoom: number) => void;
   isUnlocked: boolean;
+  currentAuthorId?: string;
   darkMode?: boolean;
 }
 
@@ -24,6 +25,7 @@ export const WordStatusBar: React.FC<WordStatusBarProps> = ({
   zoomLevel,
   setZoomLevel,
   isUnlocked,
+  currentAuthorId,
   darkMode = false,
 }) => {
   const handleZoomChange = (delta: number) => {
@@ -56,10 +58,14 @@ export const WordStatusBar: React.FC<WordStatusBarProps> = ({
           English (United States)
         </button>
 
-        <div className="hidden lg:flex items-center space-x-1 text-white/80">
-          <span>Mode:</span>
+        <div className="flex items-center space-x-1 text-white/80">
+          <span className="hidden sm:inline">Mode:</span>
           <span className="font-semibold text-white">
-            {isUnlocked ? 'Editing Mode' : 'Viewing Mode'}
+            {isUnlocked
+              ? currentAuthorId === 'author-2'
+                ? 'Author 2 (Editing)'
+                : 'Author 1 (Editing)'
+              : 'Viewing Mode'}
           </span>
         </div>
       </div>

@@ -64,15 +64,6 @@ const MAX_MESSAGES = 4; // strictly maintain at most 4 messages (oldest automati
 const MAX_AUTHORS = 2; // strictly 2-person chat room
 const HEARTBEAT_TIMEOUT_MS = 6000; // 6 seconds threshold for dead author detection
 
-// Fetch the authorization password directly from Environment Variables
-export function getSystemPassword(): string {
-  return (
-    process.env.CHAT_PASSWORD ||
-    process.env.PASSWORD ||
-    process.env.DOCUMENT_PASSWORD ||
-    ''
-  ).trim();
-}
 
 export function getOrCreateRoom(roomId: string): RoomState {
   let room = rooms.get(roomId);
@@ -482,13 +473,52 @@ export async function getRoomMessagesAsync(roomId: string): Promise<ChatMessage[
   return getRoomMessages(roomId);
 }
 
-export function verifyRoomPassword(_roomId: string, passwordAttempt: string): boolean {
-  const expectedPassword = getSystemPassword();
+export interface AuthorAuthResult {
+  valid: boolean;
+  authorId?: 'author-1' | 'author-2';
+  authorName?: string;
+  error?: string;
+}
 
-  // If no password configured in environment, allow access by default
-  if (!expectedPassword) {
-    return true;
+export function getAuthor1Password(): string {
+  return (
+    process.env.AUTHOR_1_PASSWORD ||
+    process.env.AUTHOR1_PASSWORD ||
+    process.env.AUTHOR_1 ||
+    '111'
+  ).trim();
+}
+
+export function getAuthor2Password(): string {
+  return (
+    process.env.AUTHOR_2_PASSWORD ||
+    process.env.AUTHOR2_PASSWORD ||
+    process.env.AUTHOR_2 ||
+    '222'
+  ).trim();
+}
+
+// Authenticate and deterministically resolve author role based on password:
+// Password for Author 1 (e.g. 111) -> strictly logs in as 'author-1'
+// Password for Author 2 (e.g. 222) -> strictly logs in as 'author-2'
+export function authenticateAuthor(passwordAttempt: string): AuthorAuthResult {
+  const attempt = (passwordAttempt || '').trim();
+  const pass1 = getAuthor1Password();
+  const pass2 = getAuthor2Password();
+
+  if (attempt && attempt === pass1) {
+    return { valid: true, authorId: 'author-1', authorName: 'Author 1' };
+  }
+  if (attempt && attempt === pass2) {
+    return { valid: true, authorId: 'author-2', authorName: 'Author 2' };
   }
 
-  return (passwordAttempt || '').trim() === expectedPassword;
+  return {
+    valid: false,
+    error: 'Incorrect author password. Please enter your valid Author 1 or Author 2 password.',
+  };
+}
+
+export function verifyRoomPassword(_roomId: string, passwordAttempt: string): boolean {
+  return authenticateAuthor(passwordAttempt).valid;
 }

@@ -472,7 +472,9 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                                 ? 'text-[#34d399]'
                                 : 'text-[#107c41]'
                             }`}>
-                              • {clauseNum} [{isSelf ? 'You' : 'Author'}]:
+                              • {clauseNum} [{isSelf
+                                ? `You (${msg.senderName || (currentUserId === 'author-2' ? 'Author 2' : 'Author 1')})`
+                                : (msg.senderName || (msg.senderId === 'author-2' ? 'Author 2' : 'Author 1'))}]:
                             </span>
 
                             <div className="flex items-center space-x-1.5 shrink-0">
@@ -552,7 +554,9 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                                   e.stopPropagation();
                                   setTaggedMessage({
                                     id: msg.id,
-                                    senderName: isSelf ? 'You' : 'Author',
+                                    senderName: isSelf
+                                      ? `You (${msg.senderName || (currentUserId === 'author-2' ? 'Author 2' : 'Author 1')})`
+                                      : (msg.senderName || (msg.senderId === 'author-2' ? 'Author 2' : 'Author 1')),
                                     text: msg.text,
                                     prefix: clauseNum,
                                   });

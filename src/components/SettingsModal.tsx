@@ -172,7 +172,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   type="text"
                   value={tempPw}
                   onChange={(e) => setTempPw(e.target.value)}
-                  placeholder="Vercel ENV (CHAT_PASSWORD)"
+                  placeholder="Author password (111 or 222)"
                   className="w-full h-8 px-2.5 bg-white border border-[#8a8886] rounded text-[16px] sm:text-xs text-[#201f1e] focus:outline-none focus:border-[#185abd]"
                 />
               </div>
