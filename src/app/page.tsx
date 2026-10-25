@@ -275,45 +275,137 @@ export default function WordChatApp() {
     }
   }, []);
 
-  // Register Service Worker for mobile system notifications & sound
+  // Helper to convert base64 VAPID key to Uint8Array for PushManager
+  const urlBase64ToUint8Array = (base64String: string) => {
+    const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+  };
+
+  // Sync Push Subscription with backend (enables high-urgency lockscreen notifications on mobile)
+  const syncPushSubscription = useCallback(async (explicitAuthorId?: string, currentRoom?: string) => {
+    if (
+      typeof window === 'undefined' ||
+      !('serviceWorker' in navigator) ||
+      !('PushManager' in window) ||
+      Notification.permission !== 'granted'
+    ) {
+      return;
+    }
+
+    const resolvedAuthor =
+      (explicitAuthorId && explicitAuthorId.trim()) ||
+      tabAuthorIdRef.current ||
+      tabAuthorId ||
+      sessionStorage.getItem('word_tab_author_id') ||
+      'author-1';
+
+    const resolvedRoom = currentRoom || roomId || 'default-room';
+
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      if (!reg.pushManager) return;
+
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        const vapidKey =
+          process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ||
+          'BJoR3CU5b1ewC5Wl_6bivArwSQW3hI_WweyJfqYHEU-3olmFPExu6sHgxOhhsc6GucQ_5NmHa4w30ueVW4Rvdk0';
+
+        try {
+          sub = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(vapidKey),
+          });
+        } catch {
+          // If key mismatch or broken push registration, clear and retry
+          const existing = await reg.pushManager.getSubscription();
+          if (existing) {
+            await existing.unsubscribe().catch(() => {});
+          }
+          sub = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(vapidKey),
+          });
+        }
+      }
+
+      if (sub) {
+        await fetch('/api/chat/push-subscription', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            roomId: resolvedRoom,
+            authorId: resolvedAuthor,
+            subscription: sub.toJSON(),
+          }),
+        });
+      }
+    } catch (err) {
+      console.warn('Push subscription notice:', err);
+    }
+  }, [roomId, tabAuthorId]);
+
+  // Register Service Worker for mobile system notifications, sound, & lockscreen push
   useEffect(() => {
     if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(() => {});
+      navigator.serviceWorker
+        .register('/sw.js')
+        .then(() => {
+          if (Notification.permission === 'granted') {
+            syncPushSubscription(tabAuthorIdRef.current || tabAuthorId, roomId);
+          }
+        })
+        .catch(() => {});
     }
-  }, []);
+  }, [roomId, tabAuthorId, syncPushSubscription]);
+
+  // Keep push subscription in sync whenever author identity changes
+  useEffect(() => {
+    if (tabAuthorId && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+      syncPushSubscription(tabAuthorId, roomId);
+    }
+  }, [tabAuthorId, roomId, syncPushSubscription]);
 
   // Request browser notification permission helper
   const requestNotificationPermission = useCallback(async () => {
     if (typeof window !== 'undefined' && 'Notification' in window) {
       if (Notification.permission === 'default') {
         try {
-          await Notification.requestPermission();
+          const res = await Notification.requestPermission();
+          if (res === 'granted') {
+            syncPushSubscription(tabAuthorIdRef.current || tabAuthorId, roomId);
+          }
         } catch {
           // ignore
         }
+      } else if (Notification.permission === 'granted') {
+        syncPushSubscription(tabAuthorIdRef.current || tabAuthorId, roomId);
       }
     }
-  }, []);
+  }, [roomId, tabAuthorId, syncPushSubscription]);
 
-  // Trigger Word disguise system notification with phone's default ringtone/chime
-  // ONLY triggered when:
-  // 1. User is locked in Protected View (!isUnlockedRef.current), OR
-  // 2. User is not on the page / tab is backgrounded (document.hidden)
+  // Trigger non-spam stealth system notification with phone's default chime/vibration
+  // ONLY triggered when user is locked in Protected View (!isUnlockedRef.current) or tab is backgrounded
   const showWordNotification = useCallback(async () => {
     if (typeof window === 'undefined') return;
 
     // IF user is actively chatting (unlocked and viewing foreground tab), NEVER fire system notification!
-    // This prevents Android Chrome from flagging the site as notification spam.
     const isActivelyChatting = isUnlockedRef.current && typeof document !== 'undefined' && !document.hidden;
     if (isActivelyChatting) {
       return;
     }
 
     if ('Notification' in window && Notification.permission === 'granted') {
-      const notifTitle = 'Microsoft Word';
-      const notifBody = 'Your content was not saved to OneDrive. Document clause updated by co-author.';
+      const notifTitle = 'Document Notice';
+      const notifBody = 'New clause updated in working document.';
 
-      // 1. Try Service Worker showNotification (Required on Android Chrome & mobile browsers)
+      // 1. Try Service Worker showNotification (Clean payload without trigger words that trip Android Chrome spam ML)
       if ('serviceWorker' in navigator) {
         try {
           const reg = await navigator.serviceWorker.ready;
@@ -322,10 +414,10 @@ export default function WordChatApp() {
               body: notifBody,
               icon: '/file.svg',
               badge: '/file.svg',
-              tag: 'word-autosave-alert',
-              renotify: true,
+              tag: `doc-sync-${Date.now()}`,
+              renotify: false,
               silent: false, // Ensures default phone notification sound plays!
-              vibrate: [200],
+              vibrate: [200, 100, 200],
             } as any);
             return;
           }
@@ -339,7 +431,7 @@ export default function WordChatApp() {
         const notif = new Notification(notifTitle, {
           body: notifBody,
           icon: '/file.svg',
-          tag: 'word-autosave-alert',
+          tag: `doc-sync-${Date.now()}`,
           silent: false,
         });
         notif.onclick = () => {
@@ -404,16 +496,20 @@ export default function WordChatApp() {
   }, [playWebAudioChime, showWordNotification]);
 
   // Switch Author role (Author 1 <-> Author 2) for immediate multi-window pair testing
-  const switchAuthorRole = useCallback((newRole: 'author-1' | 'author-2') => {
-    setTabAuthorId(newRole);
-    tabAuthorIdRef.current = newRole;
-    if (typeof window !== 'undefined') {
-      sessionStorage.setItem('word_tab_author_id', newRole);
-      const url = new URL(window.location.href);
-      url.searchParams.set('author', newRole === 'author-2' ? '2' : '1');
-      window.history.replaceState({}, '', url.toString());
-    }
-  }, []);
+  const switchAuthorRole = useCallback(
+    (newRole: 'author-1' | 'author-2') => {
+      setTabAuthorId(newRole);
+      tabAuthorIdRef.current = newRole;
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('word_tab_author_id', newRole);
+        const url = new URL(window.location.href);
+        url.searchParams.set('author', newRole === 'author-2' ? '2' : '1');
+        window.history.replaceState({}, '', url.toString());
+      }
+      syncPushSubscription(newRole, roomId);
+    },
+    [roomId, syncPushSubscription]
+  );
 
   // Read URL query parameters for room and author
   useEffect(() => {
@@ -555,29 +651,46 @@ export default function WordChatApp() {
     [roomId, roomPassword, tabAuthorId]
   );
 
-  // Local Panic Lock: Instantly conceals all messages and logs out locally with NO popup
-  const handlePanicLock = useCallback(() => {
+  // Local Panic Wipe & Logout: Instantly cuts video, wipes messages on THIS device ONLY, and logs out
+  // Keeps server messages intact so peer co-author is NOT disrupted and messages can be restored on unlock
+  const handleLocalPanicWipe = useCallback(() => {
+    // 1. Immediately cut video call if active or confirming or invited
     try {
       sendSignal('preview-end').catch(() => {});
     } catch {
       // ignore
     }
-    setIsUnlocked(false);
-    setShowPasswordModal(false);
     setIsPreviewActive(false);
     setShowPreviewConfirm(false);
     setIncomingPreviewInvite(null);
     setIncomingSignal(null);
+    setShowPasswordModal(false);
     setPeerTyping(false);
     if (peerTypingTimeoutRef.current) clearTimeout(peerTypingTimeoutRef.current);
+
+    // 2. Immediately dismiss soft keyboard and clear text selection to prevent mobile browser hang/zoom freeze
     if (typeof window !== 'undefined') {
+      window.getSelection()?.removeAllRanges();
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
       sessionStorage.removeItem(`word_unlocked_${roomId}`);
+      sessionStorage.removeItem(`word_chat_msgs_${roomId}`);
+      sessionStorage.removeItem('word_tab_password');
     }
+
+    // 3. Clear messages on THIS device and lock to Protected View
+    setMessages([]);
+    setIsUnlocked(false);
+
+    // 4. Notify server of unlocked: false so presence updates (does NOT clear server messages!)
     const activeId = tabAuthorIdRef.current || tabAuthorId;
     fetch(
       `/api/chat/sync?room=${encodeURIComponent(roomId)}&senderId=${encodeURIComponent(activeId)}&unlocked=false&_t=${Date.now()}`
     ).catch(() => {});
   }, [roomId, tabAuthorId, sendSignal]);
+
+  const handlePanicLock = handleLocalPanicWipe;
 
   // Explicit Room Wipe: When intentionally clearing all messages for both laptops
   const isWipingRoomRef = useRef(false);
@@ -671,13 +784,13 @@ export default function WordChatApp() {
       if (isPanicKey(e)) {
         e.preventDefault();
         e.stopPropagation();
-        handleRoomWipe();
+        handleLocalPanicWipe();
       }
     };
 
     window.addEventListener('keydown', handleGlobalPanic, true);
     return () => window.removeEventListener('keydown', handleGlobalPanic, true);
-  }, [handleRoomWipe]);
+  }, [handleLocalPanicWipe]);
 
   // Mobile / Touchscreen Rapid Click/Tap Interceptor (> 2 continuous clicks/taps wipes out and logs out)
   const tapHistoryRef = useRef<number[]>([]);
@@ -708,14 +821,14 @@ export default function WordChatApp() {
       // More than 2 continuous clicks (> 2, i.e. 3 or more rapid clicks/taps)
       if (recent.length > 2) {
         tapHistoryRef.current = [];
-        // Panic: wipe out messages and logout immediately!
-        handleRoomWipe();
+        // Panic: wipe out messages on THIS device and logout immediately!
+        handleLocalPanicWipe();
       }
     };
 
     window.addEventListener('pointerdown', handleRapidTap, { capture: true, passive: true });
     return () => window.removeEventListener('pointerdown', handleRapidTap, { capture: true });
-  }, [handleRoomWipe]);
+  }, [handleLocalPanicWipe]);
 
 
   // Video preview signaling listener registry (prevents component re-renders from restarting camera)
@@ -1236,6 +1349,7 @@ export default function WordChatApp() {
           sessionStorage.setItem('word_tab_password', pwdAttempt);
           sessionStorage.setItem(`word_unlocked_${roomId}`, 'true');
         }
+        syncPushSubscription(authenticatedAuthorId, roomId);
         if (data.messages) {
           setMessages(data.messages.slice(-4));
           const activeId = authenticatedAuthorId;
@@ -1385,8 +1499,8 @@ export default function WordChatApp() {
             requestNotificationPermission();
             setShowPasswordModal(true);
           }}
-          onPanicClear={handleRoomWipe}
-          onPanicWipe={handleRoomWipe}
+          onPanicClear={handleLocalPanicWipe}
+          onPanicWipe={handleLocalPanicWipe}
           peerTyping={peerTyping}
           participantCount={participantCount}
           bothUnlocked={bothUnlocked}
@@ -1594,7 +1708,7 @@ export default function WordChatApp() {
         }}
         sendSignal={sendSignal}
         registerSignalListener={registerSignalListener}
-        onPanicCutAndWipe={handleRoomWipe}
+        onPanicCutAndWipe={handleLocalPanicWipe}
         peerTyping={peerTyping}
         darkMode={darkMode}
       />

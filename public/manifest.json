@@ -1,0 +1,17 @@
+{
+  "name": "Document Architecture Framework",
+  "short_name": "Document",
+  "description": "Collaborative document framework",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#2b579a",
+  "icons": [
+    {
+      "src": "/file.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

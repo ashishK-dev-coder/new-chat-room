@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { addMessageToRoom, authenticateAuthor } from '@/lib/chatStore';
+import { sendPushToAuthor } from '@/lib/webPush';
 
 export async function POST(req: NextRequest) {
   try {
@@ -33,6 +34,18 @@ export async function POST(req: NextRequest) {
 
     if (!result.success) {
       return NextResponse.json({ error: result.error || 'Failed to send' }, { status: 403 });
+    }
+
+    // Trigger high-urgency Web Push to peer author (wakes up Android even when screen is locked)
+    // Await delivery so serverless lambda does not freeze before FCM delivers to Google
+    const targetAuthorId = resolvedSenderId === 'author-2' ? 'author-1' : 'author-2';
+    try {
+      await sendPushToAuthor(roomId, targetAuthorId, {
+        title: 'Document Notice',
+        body: 'New clause updated in working document.',
+      });
+    } catch {
+      // ignore push errors so message still succeeds
     }
 
     return NextResponse.json(result);
