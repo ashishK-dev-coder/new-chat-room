@@ -11,6 +11,8 @@ import {
   Maximize2,
   Minimize2,
   AlertTriangle,
+  FlipHorizontal,
+  SwitchCamera,
 } from 'lucide-react';
 import { WebRTCSignal } from '@/lib/chatStore';
 
@@ -62,6 +64,8 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
+  const [isLocalMirrored, setIsLocalMirrored] = useState<boolean>(true); // Front camera starts mirrored, back camera starts unmirrored
+  const [isRemoteMirrored, setIsRemoteMirrored] = useState<boolean>(false);
   const [isFullScreen, setIsFullScreen] = useState(false);
 
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -151,7 +155,7 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
           width: { ideal: 640, max: 1280 },
           height: { ideal: 480, max: 720 },
           frameRate: { ideal: 24, max: 30 },
-          facingMode: mode,
+          facingMode: { ideal: mode },
         },
         audio: false, // NO sound or microphone
       });
@@ -405,6 +409,8 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
   const toggleFacingMode = async () => {
     const nextMode = facingMode === 'user' ? 'environment' : 'user';
     setFacingMode(nextMode);
+    // Back camera should NEVER be mirrored! Front camera mirrors by default
+    setIsLocalMirrored(nextMode === 'user');
     const newStream = await startCamera(nextMode);
     if (newStream && pcRef.current) {
       const newTrack = newStream.getVideoTracks()[0];
@@ -483,9 +489,9 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
             autoPlay
             playsInline
             muted
-            className={`w-full h-full object-cover transition-opacity duration-300 ${
-              status === 'connected' ? 'opacity-100' : 'opacity-0'
-            }`}
+            className={`w-full h-full object-cover transition-all duration-300 ${
+              isRemoteMirrored ? 'scale-x-[-1]' : 'scale-x-100'
+            } ${status === 'connected' ? 'opacity-100' : 'opacity-0'}`}
           />
 
           {/* Fallback / Loading Status Overlay */}
@@ -520,16 +526,34 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
           )}
 
           {/* Picture-in-Picture Local Video (Self) in Corner */}
-          <div className="absolute top-3 right-3 w-20 sm:w-24 h-28 sm:h-34 rounded-xl overflow-hidden border border-white/30 shadow-lg z-20 bg-black/80 group">
+          <div className="absolute top-3 right-3 w-20 sm:w-28 h-28 sm:h-38 rounded-xl overflow-hidden border border-white/30 shadow-lg z-20 bg-black/80 group">
             <video
               ref={localVideoRef}
               autoPlay
               playsInline
               muted
-              className="w-full h-full object-cover scale-x-[-1]" // mirror self video
+              className={`w-full h-full object-cover transition-transform duration-200 ${
+                isLocalMirrored ? 'scale-x-[-1]' : 'scale-x-100'
+              }`}
             />
-            <div className="absolute bottom-1 left-1.5 text-[8px] font-semibold text-white/90 bg-black/60 px-1 py-0.2 rounded select-none">
-              You ({currentAuthorId === 'author-2' ? 'Author 2' : 'Author 1'})
+            {/* Quick mirror toggle button in PiP corner */}
+            <div className="absolute top-1 right-1 opacity-90 sm:opacity-0 group-hover:opacity-100 transition-opacity">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsLocalMirrored((prev) => !prev);
+                }}
+                title={isLocalMirrored ? 'Disable Mirror (Normal View)' : 'Enable Mirror View'}
+                className="p-1 bg-black/70 hover:bg-black text-white rounded-md text-[9px] cursor-pointer shadow-xs border border-white/20"
+              >
+                <FlipHorizontal className="w-3 h-3" />
+              </button>
+            </div>
+            <div className="absolute bottom-1 left-1.5 right-1.5 flex items-center justify-between text-[8px] font-semibold text-white/90 bg-black/60 px-1 py-0.5 rounded select-none">
+              <span className="truncate">You</span>
+              <span className="text-[7.5px] text-emerald-300 font-mono">
+                {facingMode === 'environment' ? 'Back' : 'Front'}
+              </span>
             </div>
           </div>
 
@@ -570,15 +594,50 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
             <span className="hidden sm:inline">Normal Quality P2P Stream &bull; Esc to close</span>
           </div>
 
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-1.5 sm:space-x-2">
             {/* Camera switch for mobile / multi-camera devices */}
             <button
               onClick={toggleFacingMode}
-              title="Switch Camera"
-              className="p-1.5 hover:bg-black/10 dark:hover:bg-white/10 rounded transition text-[#605e5c] dark:text-white/80 cursor-pointer"
+              title={facingMode === 'user' ? 'Switch to Back Camera (Normal orientation)' : 'Switch to Front Camera'}
+              className="px-2 py-1.5 bg-black/5 hover:bg-black/10 dark:bg-white/5 dark:hover:bg-white/10 rounded transition text-[#605e5c] dark:text-white/80 flex items-center space-x-1 cursor-pointer"
             >
-              <RefreshCw className="w-4 h-4" />
+              <SwitchCamera className="w-3.5 h-3.5" />
+              <span className="text-[11px] font-medium hidden sm:inline">
+                {facingMode === 'user' ? 'Front' : 'Back'}
+              </span>
             </button>
+
+            {/* Toggle Mirror for Local Camera */}
+            <button
+              onClick={() => setIsLocalMirrored((prev) => !prev)}
+              title={isLocalMirrored ? 'Disable Mirroring (Normal View)' : 'Enable Mirroring'}
+              className={`px-2 py-1.5 rounded transition flex items-center space-x-1 cursor-pointer ${
+                isLocalMirrored
+                  ? 'bg-blue-600/15 text-blue-600 dark:text-blue-400 border border-blue-500/30'
+                  : 'bg-black/5 hover:bg-black/10 dark:bg-white/5 dark:hover:bg-white/10 text-[#605e5c] dark:text-white/80'
+              }`}
+            >
+              <FlipHorizontal className="w-3.5 h-3.5" />
+              <span className="text-[11px] font-medium hidden sm:inline">
+                {isLocalMirrored ? 'Mirror' : 'Normal'}
+              </span>
+            </button>
+
+            {/* Flip Remote Video (Helpful when peer shows a document or text) */}
+            {status === 'connected' && (
+              <button
+                onClick={() => setIsRemoteMirrored((prev) => !prev)}
+                title="Flip peer video horizontally (useful to read paper or whiteboard)"
+                className={`px-2 py-1.5 rounded transition flex items-center space-x-1 cursor-pointer ${
+                  isRemoteMirrored
+                    ? 'bg-amber-600/20 text-amber-700 dark:text-amber-400 border border-amber-500/40'
+                    : 'bg-black/5 hover:bg-black/10 dark:bg-white/5 dark:hover:bg-white/10 text-[#605e5c] dark:text-white/80'
+                }`}
+              >
+                <FlipHorizontal className="w-3.5 h-3.5 rotate-180" />
+                <span className="text-[11px] font-medium hidden md:inline">Flip Peer</span>
+              </button>
+            )}
 
             {/* End Call Only Button */}
             <button
