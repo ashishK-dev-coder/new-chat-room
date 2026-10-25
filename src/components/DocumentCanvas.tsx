@@ -22,6 +22,7 @@ interface DocumentCanvasProps {
   incomingPreviewInvite?: { from: string } | null;
   onAcceptPreview?: () => void;
   onDeclinePreview?: () => void;
+  onTyping?: (isTyping: boolean) => void;
   darkMode?: boolean;
   zoomLevel?: number;
 }
@@ -84,6 +85,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   incomingPreviewInvite = null,
   onAcceptPreview,
   onDeclinePreview,
+  onTyping,
   darkMode = false,
   zoomLevel = 100,
 }) => {
@@ -100,6 +102,8 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   const isWipingRef = useRef(false);
   const lastTapTimeRef = useRef<number>(0);
   const lastTapPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const typingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isTypingRef = useRef<boolean>(false);
 
   // Trigger Panic Wipe: completely wipes messages on server + both clients and logs out immediately
   const triggerPanicWipe = useCallback(() => {
@@ -113,6 +117,12 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
       if (document.activeElement instanceof HTMLElement) {
         document.activeElement.blur();
       }
+    }
+
+    if (isTypingRef.current) {
+      isTypingRef.current = false;
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      onTyping?.(false);
     }
 
     setInputText('');
@@ -282,6 +292,12 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   const handleSendCurrent = () => {
     const trimmed = inputText.trim();
     if (trimmed) {
+      if (isTypingRef.current) {
+        isTypingRef.current = false;
+        if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+        onTyping?.(false);
+      }
+
       const replyPayload = taggedMessage
         ? {
             id: taggedMessage.id,
@@ -296,6 +312,31 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
       setTimeout(() => {
         inputRef.current?.focus();
       }, 10);
+    }
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    setInputText(val);
+
+    if (!isUnlocked || !onTyping) return;
+
+    if (val.trim().length > 0) {
+      if (!isTypingRef.current) {
+        isTypingRef.current = true;
+        onTyping(true);
+      }
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      typingTimerRef.current = setTimeout(() => {
+        isTypingRef.current = false;
+        onTyping(false);
+      }, 2000);
+    } else {
+      if (isTypingRef.current) {
+        isTypingRef.current = false;
+        if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+        onTyping(false);
+      }
     }
   };
 
@@ -660,7 +701,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                         <textarea
                           ref={inputRef}
                           value={inputText}
-                          onChange={(e) => setInputText(e.target.value)}
+                          onChange={handleInputChange}
                           onKeyDown={handleKeyDown}
                           onFocus={() => {
                             setTimeout(() => {
@@ -745,12 +786,19 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
               )}
             </div>
 
-            {/* Peer Typing Indicator */}
+            {/* Peer Typing Indicator with animated bouncing dots */}
             {isUnlocked && peerTyping && (
-              <div className={`text-[9.5pt] italic pl-3.5 sm:pl-4 border-l-2 border-dashed ${
-                darkMode ? 'text-[#9ca3af] border-[#34d399]' : 'text-[#6b7280] border-[#107c41]'
-              }`}>
-                Co-author is reviewing clause...
+              <div
+                className={`flex items-center space-x-2 text-[9.5pt] italic pl-3.5 sm:pl-4 border-l-2 py-0.5 ${
+                  darkMode ? 'text-[#a1a1aa] border-[#34d399]' : 'text-[#4b5563] border-[#107c41]'
+                }`}
+              >
+                <span>{currentUserId === 'author-2' ? 'Author 1' : 'Author 2'} is typing</span>
+                <span className="inline-flex items-center space-x-1 pl-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#107c41] dark:bg-[#34d399] animate-bounce [animation-delay:0ms]" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#107c41] dark:bg-[#34d399] animate-bounce [animation-delay:150ms]" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#107c41] dark:bg-[#34d399] animate-bounce [animation-delay:300ms]" />
+                </span>
               </div>
             )}
 

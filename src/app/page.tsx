@@ -121,7 +121,8 @@ export default function WordChatApp() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [participantCount, setParticipantCount] = useState<number>(1);
   const [bothUnlocked, setBothUnlocked] = useState<boolean>(false);
-  const [peerTyping] = useState<boolean>(false);
+  const [peerTyping, setPeerTyping] = useState<boolean>(false);
+  const peerTypingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Video Preview Call States (WebRTC P2P Visual Only, Muted, No Audio)
   const [showPreviewConfirm, setShowPreviewConfirm] = useState<boolean>(false);
@@ -567,6 +568,8 @@ export default function WordChatApp() {
     setShowPreviewConfirm(false);
     setIncomingPreviewInvite(null);
     setIncomingSignal(null);
+    setPeerTyping(false);
+    if (peerTypingTimeoutRef.current) clearTimeout(peerTypingTimeoutRef.current);
     if (typeof window !== 'undefined') {
       sessionStorage.removeItem(`word_unlocked_${roomId}`);
     }
@@ -594,6 +597,8 @@ export default function WordChatApp() {
     setIncomingPreviewInvite(null);
     setIncomingSignal(null);
     setShowPasswordModal(false);
+    setPeerTyping(false);
+    if (peerTypingTimeoutRef.current) clearTimeout(peerTypingTimeoutRef.current);
 
     // 2. Immediately dismiss soft keyboard and clear text selection to prevent mobile browser hang/zoom freeze
     if (typeof window !== 'undefined') {
@@ -744,6 +749,17 @@ export default function WordChatApp() {
       } else if (sig.type === 'preview-end') {
         setIncomingPreviewInvite(null);
         setIsPreviewActive(false);
+      } else if (sig.type === 'typing') {
+        const isTyping = Boolean((sig.data as { typing?: boolean })?.typing);
+        setPeerTyping(isTyping);
+        if (peerTypingTimeoutRef.current) {
+          clearTimeout(peerTypingTimeoutRef.current);
+        }
+        if (isTyping) {
+          peerTypingTimeoutRef.current = setTimeout(() => {
+            setPeerTyping(false);
+          }, 3500);
+        }
       }
 
       // Dispatch to active modal listeners directly without tearing down React trees
@@ -756,6 +772,14 @@ export default function WordChatApp() {
       });
     },
     [tabAuthorId]
+  );
+
+  // Send typing status to peer author
+  const handleSendTyping = useCallback(
+    (typing: boolean) => {
+      sendSignal('typing', { typing }).catch(() => {});
+    },
+    [sendSignal]
   );
 
   // Connect to Server-Sent Events (SSE) for real-time updates
@@ -1366,6 +1390,7 @@ export default function WordChatApp() {
           peerTyping={peerTyping}
           participantCount={participantCount}
           bothUnlocked={bothUnlocked}
+          onTyping={handleSendTyping}
           onOpenPreview={() => {
             if (participantCount >= 2 && bothUnlocked) {
               setShowPreviewConfirm(true);
@@ -1570,6 +1595,7 @@ export default function WordChatApp() {
         sendSignal={sendSignal}
         registerSignalListener={registerSignalListener}
         onPanicCutAndWipe={handleRoomWipe}
+        peerTyping={peerTyping}
         darkMode={darkMode}
       />
     </div>

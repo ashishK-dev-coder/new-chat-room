@@ -10,6 +10,7 @@ import {
   Shield,
   Maximize2,
   Minimize2,
+  AlertTriangle,
 } from 'lucide-react';
 import { WebRTCSignal } from '@/lib/chatStore';
 
@@ -23,6 +24,7 @@ interface VideoPreviewModalProps {
   sendSignal: (type: WebRTCSignal['type'], data?: unknown) => Promise<void>;
   registerSignalListener: (listener: (sig: WebRTCSignal) => void) => () => void;
   onPanicCutAndWipe?: () => void;
+  peerTyping?: boolean;
   darkMode?: boolean;
 }
 
@@ -46,6 +48,7 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
   sendSignal,
   registerSignalListener,
   onPanicCutAndWipe,
+  peerTyping = false,
   darkMode = false,
 }) => {
   const [status, setStatusState] = useState<'requesting' | 'connecting' | 'connected' | 'ended' | 'error'>(
@@ -127,6 +130,13 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
     stopAllMedia();
     onCloseRef.current();
   }, [stopAllMedia]);
+
+  const handleEndAll = useCallback(() => {
+    handleEndPreview();
+    if (onPanicCutAndWipeRef.current) {
+      onPanicCutAndWipeRef.current();
+    }
+  }, [handleEndPreview]);
 
   // Start local camera (video only, STRICTLY audio: false)
   const startCamera = useCallback(async (mode: 'user' | 'environment'): Promise<MediaStream | null> => {
@@ -439,7 +449,15 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center space-x-1 shrink-0">
+          <div className="flex items-center space-x-1.5 shrink-0">
+            <button
+              onClick={handleEndAll}
+              title="End All: Cut Video, Wipe All Messages & Logout"
+              className="px-2 py-0.5 bg-red-600/90 hover:bg-red-700 active:bg-red-800 text-white rounded text-[11px] font-bold flex items-center space-x-1 transition shadow-xs cursor-pointer border border-red-400/40"
+            >
+              <AlertTriangle className="w-3 h-3" />
+              <span>End All</span>
+            </button>
             <button
               onClick={() => setIsFullScreen((prev) => !prev)}
               title={isFullScreen ? 'Exit full screen' : 'Full screen'}
@@ -527,6 +545,18 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
             </span>
             <span className="text-white/50 text-[9px] border-l border-white/20 pl-1.5">Muted</span>
           </div>
+
+          {/* Peer Typing Indicator Dots Overlay */}
+          {peerTyping && (
+            <div className="absolute bottom-3 left-3 flex items-center space-x-2 bg-black/85 backdrop-blur-xs text-white/95 px-3 py-1.5 rounded-full text-[11px] font-medium z-20 border border-emerald-500/50 shadow-lg animate-in fade-in duration-150">
+              <span>{peerAuthorName} is typing</span>
+              <span className="flex items-center space-x-1 pl-0.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-bounce [animation-delay:0ms]" />
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-bounce [animation-delay:150ms]" />
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-bounce [animation-delay:300ms]" />
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Office Footer Control Toolbar */}
@@ -550,13 +580,24 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
               <RefreshCw className="w-4 h-4" />
             </button>
 
-            {/* End Preview Button */}
+            {/* End Call Only Button */}
             <button
               onClick={handleEndPreview}
-              className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded text-xs font-semibold flex items-center space-x-1.5 shadow-xs transition-colors cursor-pointer"
+              title="End visual preview only (keep messages)"
+              className="px-2.5 py-1.5 bg-neutral-600 hover:bg-neutral-700 text-white rounded text-xs font-medium flex items-center space-x-1 shadow-xs transition-colors cursor-pointer"
             >
               <PhoneOff className="w-3.5 h-3.5" />
-              <span>End Preview</span>
+              <span>End Call</span>
+            </button>
+
+            {/* End All: Cut video, wipe all messages & logout */}
+            <button
+              onClick={handleEndAll}
+              title="End All: Cut Video, Wipe All Messages, & Logout Immediately"
+              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white rounded text-xs font-bold flex items-center space-x-1.5 shadow-md transition-all cursor-pointer border border-red-500/50 animate-pulse hover:animate-none"
+            >
+              <AlertTriangle className="w-3.5 h-3.5 text-white" />
+              <span>End All</span>
             </button>
           </div>
         </div>
