@@ -120,6 +120,7 @@ export default function WordChatApp() {
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [participantCount, setParticipantCount] = useState<number>(1);
+  const [bothUnlocked, setBothUnlocked] = useState<boolean>(false);
   const [peerTyping] = useState<boolean>(false);
 
   // Video Preview Call States (WebRTC P2P Visual Only, Muted, No Audio)
@@ -527,9 +528,39 @@ export default function WordChatApp() {
     }
   }, [messages, roomId]);
 
+  // Send WebRTC Signal to Peer Author
+  const sendSignal = useCallback(
+    async (type: WebRTCSignal['type'], data?: unknown) => {
+      const activeId =
+        tabAuthorIdRef.current === 'author-2' || tabAuthorId === 'author-2'
+          ? 'author-2'
+          : 'author-1';
+      try {
+        await fetch('/api/chat/signal', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            roomId,
+            senderId: activeId,
+            password: roomPassword,
+            type,
+            data,
+          }),
+        });
+      } catch (err) {
+        console.error('Signal transmission error:', err);
+      }
+    },
+    [roomId, roomPassword, tabAuthorId]
+  );
+
   // Local Panic Lock: Instantly conceals all messages and logs out locally with NO popup
-  // Keeps server messages intact so other laptop is NOT disrupted and messages can be restored on unlock
   const handlePanicLock = useCallback(() => {
+    try {
+      sendSignal('preview-end').catch(() => {});
+    } catch {
+      // ignore
+    }
     setIsUnlocked(false);
     setShowPasswordModal(false);
     setIsPreviewActive(false);
@@ -539,7 +570,11 @@ export default function WordChatApp() {
     if (typeof window !== 'undefined') {
       sessionStorage.removeItem(`word_unlocked_${roomId}`);
     }
-  }, [roomId]);
+    const activeId = tabAuthorIdRef.current || tabAuthorId;
+    fetch(
+      `/api/chat/sync?room=${encodeURIComponent(roomId)}&senderId=${encodeURIComponent(activeId)}&unlocked=false&_t=${Date.now()}`
+    ).catch(() => {});
+  }, [roomId, tabAuthorId, sendSignal]);
 
   // Explicit Room Wipe: When intentionally clearing all messages for both laptops
   const isWipingRoomRef = useRef(false);
@@ -548,7 +583,19 @@ export default function WordChatApp() {
     if (isWipingRoomRef.current) return;
     isWipingRoomRef.current = true;
 
-    // 1. Immediately dismiss soft keyboard and clear text selection to prevent mobile browser hang/zoom freeze
+    // 1. Immediately cut video call if active or confirming or invited
+    try {
+      sendSignal('preview-end').catch(() => {});
+    } catch {
+      // ignore
+    }
+    setIsPreviewActive(false);
+    setShowPreviewConfirm(false);
+    setIncomingPreviewInvite(null);
+    setIncomingSignal(null);
+    setShowPasswordModal(false);
+
+    // 2. Immediately dismiss soft keyboard and clear text selection to prevent mobile browser hang/zoom freeze
     if (typeof window !== 'undefined') {
       window.getSelection()?.removeAllRanges();
       if (document.activeElement instanceof HTMLElement) {
@@ -559,23 +606,22 @@ export default function WordChatApp() {
       sessionStorage.removeItem('word_tab_password');
     }
 
-    // 2. Clear state and lock to Protected View
+    // 3. Clear state and lock to Protected View
     setMessages([]);
     setIsUnlocked(false);
-    setShowPasswordModal(false);
-    setIsPreviewActive(false);
-    setShowPreviewConfirm(false);
-    setIncomingPreviewInvite(null);
-    setIncomingSignal(null);
 
-    // 3. Clear on server and notify peer author
+    // 4. Notify server of unlocked: false & clear messages on database
+    const activeId = tabAuthorIdRef.current === 'author-2' ? 'author-2' : 'author-1';
     try {
+      fetch(
+        `/api/chat/sync?room=${encodeURIComponent(roomId)}&senderId=${encodeURIComponent(activeId)}&unlocked=false&_t=${Date.now()}`
+      ).catch(() => {});
       await fetch('/api/chat/clear', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           roomId,
-          senderId: tabAuthorIdRef.current === 'author-2' ? 'author-2' : 'author-1',
+          senderId: activeId,
         }),
       });
     } catch (err) {
@@ -585,9 +631,9 @@ export default function WordChatApp() {
         isWipingRoomRef.current = false;
       }, 800);
     }
-  }, [roomId]);
+  }, [roomId, sendSignal]);
 
-  // Check if pressed key is dedicated panic key: Window (Meta/OS), Fn, or Escape
+  // Check if pressed key is dedicated panic key: Window (Meta/OS), Ctrl, Alt, Fn, or Escape
   const isPanicKey = (e: KeyboardEvent): boolean => {
     const key = e.key;
     const code = e.code;
@@ -596,29 +642,37 @@ export default function WordChatApp() {
       key === 'OS' ||
       code === 'MetaLeft' ||
       code === 'MetaRight' ||
+      key === 'Control' ||
+      code === 'ControlLeft' ||
+      code === 'ControlRight' ||
+      key === 'Alt' ||
+      code === 'AltLeft' ||
+      code === 'AltRight' ||
       key === 'Escape' ||
       code === 'Escape' ||
       key === 'Fn' ||
       key === 'FnLock' ||
       code === 'Fn' ||
-      code === 'FnLock'
+      code === 'FnLock' ||
+      e.ctrlKey ||
+      e.altKey ||
+      e.metaKey
     );
   };
 
-  // Top-level global panic key interceptor (captures before anything else)
+  // Top-level global panic key interceptor (captures before anything else in window)
   useEffect(() => {
     const handleGlobalPanic = (e: KeyboardEvent) => {
       if (isPanicKey(e)) {
         e.preventDefault();
         e.stopPropagation();
-        setShowPasswordModal(false);
-        handlePanicLock();
+        handleRoomWipe();
       }
     };
 
     window.addEventListener('keydown', handleGlobalPanic, true);
     return () => window.removeEventListener('keydown', handleGlobalPanic, true);
-  }, [handlePanicLock]);
+  }, [handleRoomWipe]);
 
   // Mobile / Touchscreen Rapid Click/Tap Interceptor (> 2 continuous clicks/taps wipes out and logs out)
   const tapHistoryRef = useRef<number[]>([]);
@@ -658,31 +712,6 @@ export default function WordChatApp() {
     return () => window.removeEventListener('pointerdown', handleRapidTap, { capture: true });
   }, [handleRoomWipe]);
 
-  // Send WebRTC Signal to Peer Author
-  const sendSignal = useCallback(
-    async (type: WebRTCSignal['type'], data?: unknown) => {
-      const activeId =
-        tabAuthorIdRef.current === 'author-2' || tabAuthorId === 'author-2'
-          ? 'author-2'
-          : 'author-1';
-      try {
-        await fetch('/api/chat/signal', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            roomId,
-            senderId: activeId,
-            password: roomPassword,
-            type,
-            data,
-          }),
-        });
-      } catch (err) {
-        console.error('Signal transmission error:', err);
-      }
-    },
-    [roomId, roomPassword, tabAuthorId]
-  );
 
   // Video preview signaling listener registry (prevents component re-renders from restarting camera)
   const isPreviewActiveRef = useRef<boolean>(false);
@@ -703,9 +732,12 @@ export default function WordChatApp() {
       if (sig.senderId === currentTabId) return;
 
       if (sig.type === 'preview-invite') {
-        // Peer requested preview: show Join / Decline prompt ONLY if not already in preview!
-        if (!isPreviewActiveRef.current) {
+        // Peer requested preview: show Join / Decline prompt ONLY if currently logged in (unlocked) AND not already in preview!
+        if (isUnlockedRef.current && !isPreviewActiveRef.current) {
           setIncomingPreviewInvite({ from: sig.senderId });
+        } else if (!isUnlockedRef.current) {
+          // If co-author is logged out, strictly decline/reject preview invite
+          sendSignal('preview-decline').catch(() => {});
         }
       } else if (sig.type === 'preview-decline') {
         setIncomingPreviewInvite(null);
@@ -765,6 +797,9 @@ export default function WordChatApp() {
             if (data.clientCount !== undefined) {
               const count = Math.min(2, Math.max(1, Number(data.clientCount) || 1));
               setParticipantCount(count);
+            }
+            if (data.bothUnlocked !== undefined) {
+              setBothUnlocked(Boolean(data.bothUnlocked));
             }
           } else if (data.type === 'message' && data.message) {
             lastActivityTime.current = Date.now();
@@ -846,6 +881,9 @@ export default function WordChatApp() {
           } else if (data.type === 'clear') {
             setMessages([]);
             markedSeenIdsRef.current.clear();
+            setIsPreviewActive(false);
+            setShowPreviewConfirm(false);
+            setIncomingPreviewInvite(null);
             if (typeof window !== 'undefined') {
               sessionStorage.removeItem(`word_chat_msgs_${roomId}`);
             }
@@ -854,6 +892,9 @@ export default function WordChatApp() {
           } else if (data.type === 'presence') {
             const count = Math.min(2, Math.max(1, Number(data.clientCount) || 1));
             setParticipantCount(count);
+            if (data.bothUnlocked !== undefined) {
+              setBothUnlocked(Boolean(data.bothUnlocked));
+            }
           } else if (data.type === 'error') {
             console.warn('Room Notice:', data.error);
           }
@@ -919,7 +960,7 @@ export default function WordChatApp() {
 
       try {
         const res = await fetch(
-          `/api/chat/sync?room=${encodeURIComponent(roomId)}&senderId=${encodeURIComponent(activeId)}&_t=${Date.now()}`
+          `/api/chat/sync?room=${encodeURIComponent(roomId)}&senderId=${encodeURIComponent(activeId)}&unlocked=${isUnlockedRef.current}&_t=${Date.now()}`
         );
         if (res.ok && isMounted) {
           const data = await res.json();
@@ -996,6 +1037,10 @@ export default function WordChatApp() {
           if (data?.clientCount !== undefined) {
             setParticipantCount(Math.min(2, Math.max(1, Number(data.clientCount) || 1)));
           }
+
+          if (data?.bothUnlocked !== undefined) {
+            setBothUnlocked(Boolean(data.bothUnlocked));
+          }
         }
       } catch {
         // ignore offline sync
@@ -1035,6 +1080,20 @@ export default function WordChatApp() {
       document.removeEventListener('visibilitychange', handleVisibility);
     };
   }, [roomId, tabAuthorId, playNotificationSound]);
+
+  // Auto-cut video preview immediately if either author logs out
+  useEffect(() => {
+    if (!bothUnlocked && isPreviewActive) {
+      try {
+        sendSignal('preview-end').catch(() => {});
+      } catch {
+        // ignore
+      }
+      setIsPreviewActive(false);
+      setShowPreviewConfirm(false);
+      setIncomingPreviewInvite(null);
+    }
+  }, [bothUnlocked, isPreviewActive, sendSignal]);
 
   // Send message handler with 0ms instant optimistic update + acknowledgment tracking
   const handleSendMessage = async (text: string, replyTo?: ChatMessage['replyTo']) => {
@@ -1183,9 +1242,16 @@ export default function WordChatApp() {
   const handleLockToggle = () => {
     if (isUnlocked) {
       setIsUnlocked(false);
+      setIsPreviewActive(false);
+      setShowPreviewConfirm(false);
+      setIncomingPreviewInvite(null);
       if (typeof window !== 'undefined') {
         sessionStorage.removeItem(`word_unlocked_${roomId}`);
       }
+      const activeId = tabAuthorIdRef.current || tabAuthorId;
+      fetch(
+        `/api/chat/sync?room=${encodeURIComponent(roomId)}&senderId=${encodeURIComponent(activeId)}&unlocked=false&_t=${Date.now()}`
+      ).catch(() => {});
     } else {
       setShowPasswordModal(true);
     }
@@ -1295,12 +1361,13 @@ export default function WordChatApp() {
             requestNotificationPermission();
             setShowPasswordModal(true);
           }}
-          onPanicClear={handlePanicLock}
+          onPanicClear={handleRoomWipe}
           onPanicWipe={handleRoomWipe}
           peerTyping={peerTyping}
           participantCount={participantCount}
+          bothUnlocked={bothUnlocked}
           onOpenPreview={() => {
-            if (participantCount >= 2) {
+            if (participantCount >= 2 && bothUnlocked) {
               setShowPreviewConfirm(true);
             }
           }}
@@ -1423,7 +1490,7 @@ export default function WordChatApp() {
       )}
 
       {/* 2. Incoming Preview Request Dialog (Join or Decline) */}
-      {incomingPreviewInvite && !isPreviewActive && (
+      {isUnlocked && incomingPreviewInvite && !isPreviewActive && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 backdrop-blur-[1px] p-4 select-none animate-in fade-in duration-150">
           <div className="w-full max-w-sm bg-white dark:bg-[#252526] rounded-md shadow-2xl border border-[#c8c6c4] dark:border-[#3e3e42] overflow-hidden text-xs">
             <div className="bg-[#185abd] text-white px-3 py-2 flex items-center justify-between">
@@ -1502,6 +1569,7 @@ export default function WordChatApp() {
         }}
         sendSignal={sendSignal}
         registerSignalListener={registerSignalListener}
+        onPanicCutAndWipe={handleRoomWipe}
         darkMode={darkMode}
       />
     </div>

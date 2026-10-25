@@ -45,6 +45,7 @@ export interface RoomState {
   messages: ChatMessage[];
   clients: Map<string, ClientSubscriber>; // connectionId -> subscriber
   authorHeartbeats: Map<string, number>; // senderId -> lastTimestamp
+  unlockedAuthors: Set<string>; // senderId -> isUnlocked (strictly logged in)
   seqCounter?: number;
   lastRedisFetchTime?: number; // In-memory TTL throttle to save thousands of Redis read calls
   pendingSignals?: Map<string, WebRTCSignal[]>; // targetAuthorId -> WebRTCSignal[]
@@ -74,6 +75,7 @@ export function getOrCreateRoom(roomId: string): RoomState {
       messages: [],
       clients: new Map(),
       authorHeartbeats: new Map(),
+      unlockedAuthors: new Set(),
       pendingSignals: new Map(),
     };
     rooms.set(roomId, room);
@@ -81,10 +83,47 @@ export function getOrCreateRoom(roomId: string): RoomState {
   if (!room.authorHeartbeats) {
     room.authorHeartbeats = new Map();
   }
+  if (!room.unlockedAuthors) {
+    room.unlockedAuthors = new Set();
+  }
   if (!room.pendingSignals) {
     room.pendingSignals = new Map();
   }
   return room;
+}
+
+// Track logged-in (unlocked) status of authors
+export function setAuthorUnlockedStatus(
+  roomId: string,
+  authorId: string,
+  unlocked: boolean
+): { bothUnlocked: boolean; unlockedCount: number } {
+  const room = getOrCreateRoom(roomId);
+  if (unlocked) {
+    room.unlockedAuthors.add(authorId);
+  } else {
+    room.unlockedAuthors.delete(authorId);
+  }
+  broadcastPresence(room);
+  return {
+    bothUnlocked: isBothAuthorsUnlocked(room),
+    unlockedCount: room.unlockedAuthors.size,
+  };
+}
+
+export function isBothAuthorsUnlocked(room: RoomState): boolean {
+  if (!room.unlockedAuthors) return false;
+  const activeIds = getActiveAuthorIds(room);
+  return (
+    activeIds.has('author-1') &&
+    activeIds.has('author-2') &&
+    room.unlockedAuthors.has('author-1') &&
+    room.unlockedAuthors.has('author-2')
+  );
+}
+
+export function getUnlockedAuthorCount(room: RoomState): number {
+  return room.unlockedAuthors ? room.unlockedAuthors.size : 0;
 }
 
 // Record an author heartbeat timestamp and prune expired sessions
@@ -106,9 +145,12 @@ export function recordAuthorHeartbeat(roomId: string, senderId: string): number 
 export function removeAuthorFromRoom(roomId: string, senderId: string): void {
   const room = getOrCreateRoom(roomId);
 
-  // 1. Remove from heartbeats
+  // 1. Remove from heartbeats & unlocked sessions
   if (room.authorHeartbeats) {
     room.authorHeartbeats.delete(senderId);
+  }
+  if (room.unlockedAuthors) {
+    room.unlockedAuthors.delete(senderId);
   }
 
   // 2. Remove all SSE client connections associated with this author
@@ -153,7 +195,10 @@ export function getActiveAuthorIds(room: RoomState): Set<string> {
         }
       }
     });
-    expiredAuthors.forEach((sid) => room.authorHeartbeats?.delete(sid));
+    expiredAuthors.forEach((sid) => {
+      room.authorHeartbeats?.delete(sid);
+      room.unlockedAuthors?.delete(sid);
+    });
   }
 
   return ids;
@@ -173,10 +218,14 @@ export function canAuthorParticipate(_roomId: string, _senderId: string): boolea
 // Broadcast presence count strictly to all connected clients
 export function broadcastPresence(room: RoomState) {
   const clampedCount = getActiveAuthorCount(room);
+  const bothUnlocked = isBothAuthorsUnlocked(room);
+  const unlockedCount = getUnlockedAuthorCount(room);
 
   const payload = JSON.stringify({
     type: 'presence',
     clientCount: clampedCount,
+    bothUnlocked,
+    unlockedCount,
     timestamp: Date.now(),
   });
 

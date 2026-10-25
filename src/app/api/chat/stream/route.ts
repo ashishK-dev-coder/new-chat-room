@@ -1,14 +1,27 @@
 import { NextRequest } from 'next/server';
-import { getOrCreateRoom, getRoomMessages, subscribeToRoom, getActiveAuthorCount, recordAuthorHeartbeat } from '@/lib/chatStore';
+import {
+  getOrCreateRoom,
+  getRoomMessages,
+  subscribeToRoom,
+  getActiveAuthorCount,
+  recordAuthorHeartbeat,
+  setAuthorUnlockedStatus,
+  isBothAuthorsUnlocked,
+  getUnlockedAuthorCount,
+} from '@/lib/chatStore';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const roomId = searchParams.get('room') || 'default-room';
   const rawSenderId = searchParams.get('senderId');
   const senderId = rawSenderId === 'author-2' ? 'author-2' : 'author-1';
+  const rawUnlocked = searchParams.get('unlocked');
 
   // Ensure room exists
   const room = getOrCreateRoom(roomId);
+  if (rawUnlocked !== null) {
+    setAuthorUnlockedStatus(roomId, senderId, rawUnlocked === 'true');
+  }
 
   const encoder = new TextEncoder();
   let cleanup: (() => void) | null = null;
@@ -52,29 +65,42 @@ export async function GET(req: NextRequest) {
 
       cleanup = subResult.unsubscribe;
 
-      // 3. Immediately send current messages (max 4) AND current author count
+      // 3. Immediately send current messages (max 4) AND current author count & unlock status
       const currentMessages = getRoomMessages(roomId);
       const currentCount = getActiveAuthorCount(room);
+      const bothUnlocked = isBothAuthorsUnlocked(room);
+      const unlockedCount = getUnlockedAuthorCount(room);
 
       const initPayload = JSON.stringify({
         type: 'init',
         messages: currentMessages,
         clientCount: currentCount,
+        bothUnlocked,
+        unlockedCount,
       });
       sendChunk(`data: ${initPayload}\n\n`);
 
       // 4. Fast keep-alive heartbeat every 3 seconds to immediately detect cut/leave connections
-      // and rapidly push presence count updates
+      // and rapidly push presence count & unlock status updates
       let lastReportedCount = currentCount;
+      let lastReportedBothUnlocked = bothUnlocked;
       keepAliveTimer = setInterval(() => {
         try {
           controller.enqueue(encoder.encode(`: ping\n\n`));
           // Refresh heartbeat for this live SSE client
           recordAuthorHeartbeat(roomId, senderId);
           const count = getActiveAuthorCount(room);
-          if (count !== lastReportedCount) {
+          const currentBothUnlocked = isBothAuthorsUnlocked(room);
+          if (count !== lastReportedCount || currentBothUnlocked !== lastReportedBothUnlocked) {
             lastReportedCount = count;
-            sendChunk(`data: ${JSON.stringify({ type: 'presence', clientCount: count })}\n\n`);
+            lastReportedBothUnlocked = currentBothUnlocked;
+            sendChunk(
+              `data: ${JSON.stringify({
+                type: 'presence',
+                clientCount: count,
+                bothUnlocked: currentBothUnlocked,
+              })}\n\n`
+            );
           }
         } catch {
           if (keepAliveTimer) {

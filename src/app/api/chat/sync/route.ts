@@ -1,5 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getOrCreateRoom, getRoomMessagesAsync, getActiveAuthorCount, recordAuthorHeartbeat, popPendingSignals } from '@/lib/chatStore';
+import {
+  getOrCreateRoom,
+  getRoomMessagesAsync,
+  getActiveAuthorCount,
+  recordAuthorHeartbeat,
+  popPendingSignals,
+  setAuthorUnlockedStatus,
+  isBothAuthorsUnlocked,
+  getUnlockedAuthorCount,
+} from '@/lib/chatStore';
 import { getRedisClient } from '@/lib/redis';
 
 export async function GET(req: NextRequest) {
@@ -8,14 +17,20 @@ export async function GET(req: NextRequest) {
     const roomId = searchParams.get('room') || 'default-room';
     const rawSenderId = searchParams.get('senderId');
     const senderId = rawSenderId === 'author-2' ? 'author-2' : rawSenderId === 'author-1' ? 'author-1' : null;
+    const rawUnlocked = searchParams.get('unlocked');
 
     const room = getOrCreateRoom(roomId);
     if (senderId) {
       recordAuthorHeartbeat(roomId, senderId);
+      if (rawUnlocked !== null) {
+        setAuthorUnlockedStatus(roomId, senderId, rawUnlocked === 'true');
+      }
     }
 
     const messages = await getRoomMessagesAsync(roomId);
     const clientCount = getActiveAuthorCount(room);
+    const bothUnlocked = isBothAuthorsUnlocked(room);
+    const unlockedCount = getUnlockedAuthorCount(room);
 
     let pendingSignal = null;
     if (senderId) {
@@ -43,6 +58,8 @@ export async function GET(req: NextRequest) {
       {
         messages,
         clientCount,
+        bothUnlocked,
+        unlockedCount,
         signal: pendingSignal,
         timestamp: Date.now(),
       },

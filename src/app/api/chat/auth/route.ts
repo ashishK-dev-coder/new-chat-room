@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getRoomMessages, authenticateAuthor } from '@/lib/chatStore';
+import { getRoomMessages, authenticateAuthor, setAuthorUnlockedStatus } from '@/lib/chatStore';
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,6 +13,10 @@ export async function POST(req: NextRequest) {
         { success: false, error: auth.error || 'Incorrect document password' },
         { status: 401 }
       );
+    }
+
+    if (auth.authorId) {
+      setAuthorUnlockedStatus(roomId, auth.authorId, true);
     }
 
     return NextResponse.json({

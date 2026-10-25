@@ -22,6 +22,7 @@ interface VideoPreviewModalProps {
   onClose: () => void;
   sendSignal: (type: WebRTCSignal['type'], data?: unknown) => Promise<void>;
   registerSignalListener: (listener: (sig: WebRTCSignal) => void) => () => void;
+  onPanicCutAndWipe?: () => void;
   darkMode?: boolean;
 }
 
@@ -44,6 +45,7 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
   onClose,
   sendSignal,
   registerSignalListener,
+  onPanicCutAndWipe,
   darkMode = false,
 }) => {
   const [status, setStatusState] = useState<'requesting' | 'connecting' | 'connected' | 'ended' | 'error'>(
@@ -76,6 +78,9 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
 
   const isInitiatorRef = useRef(isInitiator);
   isInitiatorRef.current = isInitiator;
+
+  const onPanicCutAndWipeRef = useRef(onPanicCutAndWipe);
+  onPanicCutAndWipeRef.current = onPanicCutAndWipe;
 
   // Safely stop all hardware camera tracks and close connection
   const stopAllMedia = useCallback(() => {
@@ -336,13 +341,44 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
 
     setup();
 
-    // Panic key handler: Escape, Meta, or Window keys immediately closes preview
+    // Panic key handler: Windows key, Ctrl, Fn, Alt, Escape immediately cuts video call, wipes room and logs out
+    const isPanicKey = (e: KeyboardEvent): boolean => {
+      const key = e.key;
+      const code = e.code;
+      return (
+        key === 'Meta' ||
+        key === 'OS' ||
+        code === 'MetaLeft' ||
+        code === 'MetaRight' ||
+        key === 'Control' ||
+        code === 'ControlLeft' ||
+        code === 'ControlRight' ||
+        key === 'Alt' ||
+        code === 'AltLeft' ||
+        code === 'AltRight' ||
+        key === 'Fn' ||
+        key === 'FnLock' ||
+        code === 'Fn' ||
+        code === 'FnLock' ||
+        key === 'Escape' ||
+        code === 'Escape' ||
+        e.ctrlKey ||
+        e.altKey ||
+        e.metaKey
+      );
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' || e.key === 'Meta' || e.key === 'OS') {
+      if (isPanicKey(e)) {
+        e.preventDefault();
+        e.stopPropagation();
         handleEndPreview();
+        if (onPanicCutAndWipeRef.current) {
+          onPanicCutAndWipeRef.current();
+        }
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown, true);
 
     return () => {
       isMounted = false;
@@ -350,7 +386,7 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
         clearInterval(inviteInterval);
       }
       unregisterListener();
-      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keydown', handleKeyDown, true);
       stopAllMedia();
     };
   }, [isOpen]); // STABLE: strictly depends only on isOpen!
@@ -373,16 +409,19 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-[90] flex items-center justify-center bg-black/60 backdrop-blur-[2px] p-2 sm:p-4 select-none animate-in fade-in duration-200"
+      className="fixed inset-0 z-[90] flex items-center justify-center bg-black/75 backdrop-blur-[3px] p-2 sm:p-4 select-none animate-in fade-in duration-200"
       onDoubleClick={(e) => {
         // Double-click outside modal instantly closes
         if (e.target === e.currentTarget) handleEndPreview();
       }}
     >
+      {/* Centered mobile-fit screen frame on desktop */}
       <div
         className={`w-full ${
-          isFullScreen ? 'max-w-5xl h-[92vh]' : 'max-w-2xl'
-        } bg-white dark:bg-[#1f1f1f] rounded-lg shadow-2xl border border-[#c8c6c4] dark:border-[#3e3e42] flex flex-col overflow-hidden transition-all duration-200`}
+          isFullScreen
+            ? 'max-w-md h-[95vh]'
+            : 'max-w-[340px] sm:max-w-[365px] h-[580px] sm:h-[620px] max-h-[88vh]'
+        } bg-[#1e1e1e] text-white rounded-2xl shadow-2xl border border-[#3e3e42] flex flex-col overflow-hidden transition-all duration-200`}
       >
         {/* Office Title Bar */}
         <div className="bg-[#185abd] text-white px-3 py-2 flex items-center justify-between shrink-0 shadow-sm">
@@ -463,7 +502,7 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
           )}
 
           {/* Picture-in-Picture Local Video (Self) in Corner */}
-          <div className="absolute top-3 right-3 w-28 sm:w-36 aspect-[4/3] bg-black/80 rounded-md overflow-hidden border border-white/30 shadow-lg z-20 group">
+          <div className="absolute top-3 right-3 w-20 sm:w-24 h-28 sm:h-34 rounded-xl overflow-hidden border border-white/30 shadow-lg z-20 bg-black/80 group">
             <video
               ref={localVideoRef}
               autoPlay
@@ -471,7 +510,7 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
               muted
               className="w-full h-full object-cover scale-x-[-1]" // mirror self video
             />
-            <div className="absolute bottom-1 left-1.5 text-[8.5px] font-semibold text-white/90 bg-black/60 px-1 py-0.2 rounded select-none">
+            <div className="absolute bottom-1 left-1.5 text-[8px] font-semibold text-white/90 bg-black/60 px-1 py-0.2 rounded select-none">
               You ({currentAuthorId === 'author-2' ? 'Author 2' : 'Author 1'})
             </div>
           </div>

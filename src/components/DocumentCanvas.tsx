@@ -17,6 +17,7 @@ interface DocumentCanvasProps {
   onPanicWipe?: () => void;
   peerTyping: boolean;
   participantCount?: number;
+  bothUnlocked?: boolean;
   onOpenPreview?: () => void;
   incomingPreviewInvite?: { from: string } | null;
   onAcceptPreview?: () => void;
@@ -78,6 +79,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   onPanicWipe,
   peerTyping,
   participantCount = 1,
+  bothUnlocked = false,
   onOpenPreview,
   incomingPreviewInvite = null,
   onAcceptPreview,
@@ -185,35 +187,46 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
     }
   };
 
-  const isPanicKey = (key: string, code: string): boolean => {
+  const isPanicKey = (e: KeyboardEvent | React.KeyboardEvent): boolean => {
+    const key = e.key;
+    const code = e.code;
     return (
       key === 'Meta' ||
       key === 'OS' ||
       code === 'MetaLeft' ||
       code === 'MetaRight' ||
+      key === 'Control' ||
+      code === 'ControlLeft' ||
+      code === 'ControlRight' ||
+      key === 'Alt' ||
+      code === 'AltLeft' ||
+      code === 'AltRight' ||
       key === 'Escape' ||
       code === 'Escape' ||
       key === 'Fn' ||
       code === 'Fn' ||
       key === 'FnLock' ||
-      code === 'FnLock'
+      code === 'FnLock' ||
+      e.ctrlKey ||
+      e.altKey ||
+      e.metaKey
     );
   };
 
-  // Global key listener for Windows key, Fn, Escape panic conceal + lock
+  // Global key listener for Windows key, Ctrl, Alt, Fn, Escape panic wipe out + logout
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if (isPanicKey(e.key, e.code)) {
+      if (isPanicKey(e)) {
         e.preventDefault();
         setInputText('');
         setTaggedMessage(null);
-        onPanicClear();
+        triggerPanicWipe();
       }
     };
 
-    window.addEventListener('keydown', handleGlobalKeyDown);
-    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [onPanicClear]);
+    window.addEventListener('keydown', handleGlobalKeyDown, true);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown, true);
+  }, [triggerPanicWipe]);
 
   // Focus textarea when unlocked and smoothly scroll to active clauses on new message append
   const latestMsgKey = messages[messages.length - 1]?.id || messages[messages.length - 1]?.timestamp;
@@ -241,12 +254,12 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // 1. Dedicated panic keys check (Windows Key, Escape, Fn)
-    if (isPanicKey(e.key, e.code)) {
+    // 1. Dedicated panic keys check (Windows Key, Ctrl, Alt, Fn, Escape)
+    if (isPanicKey(e)) {
       e.preventDefault();
       setInputText('');
       setTaggedMessage(null);
-      onPanicClear();
+      triggerPanicWipe();
       return;
     }
 
@@ -774,7 +787,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                       Decline
                     </button>
                   </div>
-                ) : participantCount >= 2 ? (
+                ) : participantCount >= 2 && bothUnlocked ? (
                   <button
                     type="button"
                     onClick={(e) => {
@@ -782,7 +795,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                       onOpenPreview();
                     }}
                     className="px-2.5 py-1 text-[9pt] sm:text-[9.5pt] font-semibold rounded bg-[#185abd]/10 hover:bg-[#185abd]/20 text-[#185abd] dark:text-blue-300 dark:bg-blue-900/30 dark:hover:bg-blue-900/50 border border-[#185abd]/30 cursor-pointer transition-all flex items-center space-x-1.5 shadow-xs"
-                    title="Start visual preview (Both authors online)"
+                    title="Start visual preview (Both authors online & logged in)"
                   >
                     <span>See preview</span>
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
@@ -790,9 +803,15 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                 ) : (
                   <div
                     className="px-2 py-0.5 text-[8.5pt] text-[#a19f9d] dark:text-[#71717a] italic bg-black/5 dark:bg-white/5 rounded border border-black/5 select-none"
-                    title="Visual preview requires both authors to be online"
+                    title={
+                      participantCount < 2
+                        ? 'Visual preview requires both authors to be online'
+                        : 'Visual preview requires co-author to be logged in'
+                    }
                   >
-                    See preview (Waiting for co-author...)
+                    {participantCount < 2
+                      ? 'See preview (Waiting for co-author to be online...)'
+                      : 'See preview (Waiting for co-author to login...)'}
                   </div>
                 )}
               </div>
