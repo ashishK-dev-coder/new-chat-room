@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { getOrCreateRoom, getRoomMessages, subscribeToRoom, getActiveAuthorCount } from '@/lib/chatStore';
+import { getOrCreateRoom, getRoomMessages, subscribeToRoom, getActiveAuthorCount, recordAuthorHeartbeat } from '@/lib/chatStore';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -69,6 +69,8 @@ export async function GET(req: NextRequest) {
       keepAliveTimer = setInterval(() => {
         try {
           controller.enqueue(encoder.encode(`: ping\n\n`));
+          // Refresh heartbeat for this live SSE client
+          recordAuthorHeartbeat(roomId, senderId);
           const count = getActiveAuthorCount(room);
           if (count !== lastReportedCount) {
             lastReportedCount = count;

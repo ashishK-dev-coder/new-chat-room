@@ -17,6 +17,7 @@ interface WordStatusBarProps {
   setZoomLevel: (zoom: number) => void;
   isUnlocked: boolean;
   currentAuthorId?: string;
+  onSwitchAuthorRole?: (role: 'author-1' | 'author-2') => void;
   darkMode?: boolean;
 }
 
@@ -26,6 +27,7 @@ export const WordStatusBar: React.FC<WordStatusBarProps> = ({
   setZoomLevel,
   isUnlocked,
   currentAuthorId,
+  onSwitchAuthorRole,
   darkMode = false,
 }) => {
   const handleZoomChange = (delta: number) => {
@@ -58,16 +60,25 @@ export const WordStatusBar: React.FC<WordStatusBarProps> = ({
           English (United States)
         </button>
 
-        <div className="flex items-center space-x-1 text-white/80">
-          <span className="hidden sm:inline">Mode:</span>
-          <span className="font-semibold text-white">
-            {isUnlocked
-              ? currentAuthorId === 'author-2'
-                ? 'Author 2 (Editing)'
-                : 'Author 1 (Editing)'
-              : 'Viewing Mode'}
+        <button
+          onClick={() => {
+            if (onSwitchAuthorRole) {
+              onSwitchAuthorRole(currentAuthorId === 'author-2' ? 'author-1' : 'author-2');
+            }
+          }}
+          title="Click to switch author role between Author 1 and Author 2"
+          className="flex items-center space-x-1 hover:bg-white/20 px-1.5 py-0.5 rounded transition cursor-pointer text-white/90"
+        >
+          <span className="hidden sm:inline">Role:</span>
+          <span className="font-semibold text-white underline decoration-white/40">
+            {currentAuthorId === 'author-2' ? 'Author 2' : 'Author 1'}
           </span>
-        </div>
+          {isUnlocked ? (
+            <span className="text-[10px] text-emerald-300 font-medium">(Active)</span>
+          ) : (
+            <span className="text-[10px] text-white/60">(Protected)</span>
+          )}
+        </button>
       </div>
 
       {/* Right items: Focus & Views (desktop/tablet) + Zoom Controls (all devices including mobile) */}

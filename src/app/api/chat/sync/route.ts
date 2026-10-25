@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getOrCreateRoom, getRoomMessagesAsync, getActiveAuthorCount, recordAuthorHeartbeat } from '@/lib/chatStore';
+import { getOrCreateRoom, getRoomMessagesAsync, getActiveAuthorCount, recordAuthorHeartbeat, popPendingSignals } from '@/lib/chatStore';
 import { getRedisClient } from '@/lib/redis';
 
 export async function GET(req: NextRequest) {
@@ -18,12 +18,20 @@ export async function GET(req: NextRequest) {
     const clientCount = getActiveAuthorCount(room);
 
     let pendingSignal = null;
+    if (senderId) {
+      const inMemorySignals = popPendingSignals(roomId, senderId);
+      if (inMemorySignals.length > 0) {
+        pendingSignal = inMemorySignals[inMemorySignals.length - 1];
+      }
+    }
+
     const redis = getRedisClient();
-    if (redis && senderId) {
+    if (!pendingSignal && redis && senderId) {
       try {
         const raw = await redis.get<string | object>(`room:${roomId}:signal:${senderId}`);
         if (raw) {
-          pendingSignal = typeof raw === 'string' ? JSON.parse(raw) : raw;
+          const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+          pendingSignal = parsed?.signal || parsed;
           redis.del(`room:${roomId}:signal:${senderId}`).catch(() => {});
         }
       } catch {

@@ -18,6 +18,9 @@ interface DocumentCanvasProps {
   peerTyping: boolean;
   participantCount?: number;
   onOpenPreview?: () => void;
+  incomingPreviewInvite?: { from: string } | null;
+  onAcceptPreview?: () => void;
+  onDeclinePreview?: () => void;
   darkMode?: boolean;
   zoomLevel?: number;
 }
@@ -76,6 +79,9 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   peerTyping,
   participantCount = 1,
   onOpenPreview,
+  incomingPreviewInvite = null,
+  onAcceptPreview,
+  onDeclinePreview,
   darkMode = false,
   zoomLevel = 100,
 }) => {
@@ -743,7 +749,32 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                   <span className="font-medium">Document Visual Preview:</span>
                 </div>
 
-                {participantCount >= 2 ? (
+                {incomingPreviewInvite ? (
+                  <div className="flex items-center space-x-2">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAcceptPreview?.();
+                      }}
+                      className="px-3 py-1 text-[9pt] sm:text-[9.5pt] font-semibold rounded bg-[#107c41] hover:bg-[#0e6b37] text-white cursor-pointer shadow-xs flex items-center space-x-1.5 animate-pulse"
+                      title="Join co-author's live visual preview"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      <span>Join Preview</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDeclinePreview?.();
+                      }}
+                      className="px-2 py-1 text-[8.5pt] font-medium rounded bg-[#f3f2f1] hover:bg-[#edebe9] dark:bg-[#333] dark:hover:bg-[#444] text-[#201f1e] dark:text-[#f3f4f6] border border-[#8a8886] cursor-pointer"
+                    >
+                      Decline
+                    </button>
+                  </div>
+                ) : participantCount >= 2 ? (
                   <button
                     type="button"
                     onClick={(e) => {

@@ -85,13 +85,23 @@ export default function WordChatApp() {
     // Strictly identify Author 1 vs Author 2 without random tokens
     let authorId = 'author-1';
     try {
-      const stored = sessionStorage.getItem('word_tab_author_id');
-      if (stored === 'author-1' || stored === 'author-2') {
-        authorId = stored;
+      const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+      const urlAuthor = params?.get('author') || params?.get('a');
+      if (urlAuthor === '2' || urlAuthor === 'author-2') {
+        authorId = 'author-2';
+        sessionStorage.setItem('word_tab_author_id', 'author-2');
+      } else if (urlAuthor === '1' || urlAuthor === 'author-1') {
+        authorId = 'author-1';
+        sessionStorage.setItem('word_tab_author_id', 'author-1');
       } else {
-        const storedPwd = sessionStorage.getItem('word_tab_password');
-        authorId = storedPwd === '222' ? 'author-2' : 'author-1';
-        sessionStorage.setItem('word_tab_author_id', authorId);
+        const stored = sessionStorage.getItem('word_tab_author_id');
+        if (stored === 'author-1' || stored === 'author-2') {
+          authorId = stored;
+        } else {
+          const storedPwd = sessionStorage.getItem('word_tab_password');
+          authorId = storedPwd === '222' ? 'author-2' : 'author-1';
+          sessionStorage.setItem('word_tab_author_id', authorId);
+        }
       }
     } catch {
       authorId = 'author-1';
@@ -391,7 +401,19 @@ export default function WordChatApp() {
     }
   }, [playWebAudioChime, showWordNotification]);
 
-  // Read URL query parameters for room
+  // Switch Author role (Author 1 <-> Author 2) for immediate multi-window pair testing
+  const switchAuthorRole = useCallback((newRole: 'author-1' | 'author-2') => {
+    setTabAuthorId(newRole);
+    tabAuthorIdRef.current = newRole;
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('word_tab_author_id', newRole);
+      const url = new URL(window.location.href);
+      url.searchParams.set('author', newRole === 'author-2' ? '2' : '1');
+      window.history.replaceState({}, '', url.toString());
+    }
+  }, []);
+
+  // Read URL query parameters for room and author
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -403,16 +425,25 @@ export default function WordChatApp() {
       const activeRoom = urlRoom || 'default-room';
       const unlockedSession = sessionStorage.getItem(`word_unlocked_${activeRoom}`);
       const storedPwd = sessionStorage.getItem('word_tab_password');
-      const storedAuthorId = sessionStorage.getItem('word_tab_author_id');
-      if (storedAuthorId === 'author-1' || storedAuthorId === 'author-2') {
-        setTabAuthorId(storedAuthorId);
-        tabAuthorIdRef.current = storedAuthorId;
+      const urlAuthor = params.get('author') || params.get('a');
+
+      let resolvedAuthorId = 'author-1';
+      if (urlAuthor === '2' || urlAuthor === 'author-2') {
+        resolvedAuthorId = 'author-2';
+      } else if (urlAuthor === '1' || urlAuthor === 'author-1') {
+        resolvedAuthorId = 'author-1';
       } else {
-        const resolvedId = storedPwd === '222' ? 'author-2' : 'author-1';
-        setTabAuthorId(resolvedId);
-        tabAuthorIdRef.current = resolvedId;
-        sessionStorage.setItem('word_tab_author_id', resolvedId);
+        const storedAuthorId = sessionStorage.getItem('word_tab_author_id');
+        if (storedAuthorId === 'author-1' || storedAuthorId === 'author-2') {
+          resolvedAuthorId = storedAuthorId;
+        } else {
+          resolvedAuthorId = storedPwd === '222' ? 'author-2' : 'author-1';
+        }
       }
+      setTabAuthorId(resolvedAuthorId);
+      tabAuthorIdRef.current = resolvedAuthorId;
+      sessionStorage.setItem('word_tab_author_id', resolvedAuthorId);
+
       if (unlockedSession === 'true' && storedPwd) {
         setIsUnlocked(true);
         setRoomPassword(storedPwd);
@@ -1195,6 +1226,40 @@ export default function WordChatApp() {
         />
       )}
 
+      {/* Real-time Top Notification Banner for Incoming Preview Invite */}
+      {incomingPreviewInvite && !isPreviewActive && (
+        <div className="bg-[#107c41] text-white px-4 py-2 flex items-center justify-between text-xs shadow-md border-b border-[#0e6b37] z-30 shrink-0 select-none animate-in slide-in-from-top duration-200">
+          <div className="flex items-center space-x-2">
+            <Eye className="w-4 h-4 animate-pulse text-emerald-200" />
+            <span className="font-semibold">
+              Co-author ({incomingPreviewInvite.from === 'author-2' ? 'Author 2' : 'Author 1'}) has started Document Preview.
+            </span>
+            <span className="text-white/80 hidden sm:inline">&bull; Visual only (Audio muted)</span>
+          </div>
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => {
+                setIncomingPreviewInvite(null);
+                setIsInitiator(false);
+                setIsPreviewActive(true);
+              }}
+              className="px-3 py-1 bg-white text-[#107c41] hover:bg-emerald-50 rounded text-xs font-bold transition shadow-xs cursor-pointer"
+            >
+              Join Preview
+            </button>
+            <button
+              onClick={() => {
+                sendSignal('preview-decline');
+                setIncomingPreviewInvite(null);
+              }}
+              className="px-2.5 py-1 bg-black/20 hover:bg-black/30 text-white rounded text-xs font-medium transition cursor-pointer"
+            >
+              Decline
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 4. MS Word Ruler */}
       <WordRuler darkMode={darkMode} />
 
@@ -1220,6 +1285,16 @@ export default function WordChatApp() {
               setShowPreviewConfirm(true);
             }
           }}
+          incomingPreviewInvite={incomingPreviewInvite}
+          onAcceptPreview={() => {
+            setIncomingPreviewInvite(null);
+            setIsInitiator(false);
+            setIsPreviewActive(true);
+          }}
+          onDeclinePreview={() => {
+            sendSignal('preview-decline');
+            setIncomingPreviewInvite(null);
+          }}
           darkMode={darkMode}
           zoomLevel={zoomLevel}
         />
@@ -1232,6 +1307,7 @@ export default function WordChatApp() {
         setZoomLevel={setZoomLevel}
         isUnlocked={isUnlocked}
         currentAuthorId={tabAuthorId}
+        onSwitchAuthorRole={switchAuthorRole}
         darkMode={darkMode}
       />
 
@@ -1329,7 +1405,7 @@ export default function WordChatApp() {
 
       {/* 2. Incoming Preview Request Dialog (Join or Decline) */}
       {incomingPreviewInvite && !isPreviewActive && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-[1px] p-4 select-none animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 backdrop-blur-[1px] p-4 select-none animate-in fade-in duration-150">
           <div className="w-full max-w-sm bg-white dark:bg-[#252526] rounded-md shadow-2xl border border-[#c8c6c4] dark:border-[#3e3e42] overflow-hidden text-xs">
             <div className="bg-[#185abd] text-white px-3 py-2 flex items-center justify-between">
               <div className="flex items-center space-x-2">

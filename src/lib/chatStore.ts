@@ -47,6 +47,7 @@ export interface RoomState {
   authorHeartbeats: Map<string, number>; // senderId -> lastTimestamp
   seqCounter?: number;
   lastRedisFetchTime?: number; // In-memory TTL throttle to save thousands of Redis read calls
+  pendingSignals?: Map<string, WebRTCSignal[]>; // targetAuthorId -> WebRTCSignal[]
 }
 
 // Global variable across hot reloads in development
@@ -62,7 +63,7 @@ if (process.env.NODE_ENV !== 'production') {
 
 const MAX_MESSAGES = 4; // strictly maintain at most 4 messages (oldest automatically pruned and removed)
 const MAX_AUTHORS = 2; // strictly 2-person chat room
-const HEARTBEAT_TIMEOUT_MS = 6000; // 6 seconds threshold for dead author detection
+const HEARTBEAT_TIMEOUT_MS = 30000; // 30 seconds threshold for active presence without flickering
 
 
 export function getOrCreateRoom(roomId: string): RoomState {
@@ -73,11 +74,15 @@ export function getOrCreateRoom(roomId: string): RoomState {
       messages: [],
       clients: new Map(),
       authorHeartbeats: new Map(),
+      pendingSignals: new Map(),
     };
     rooms.set(roomId, room);
   }
   if (!room.authorHeartbeats) {
     room.authorHeartbeats = new Map();
+  }
+  if (!room.pendingSignals) {
+    room.pendingSignals = new Map();
   }
   return room;
 }
@@ -123,31 +128,29 @@ export function removeAuthorFromRoom(roomId: string, senderId: string): void {
 export function getActiveAuthorIds(room: RoomState): Set<string> {
   const now = Date.now();
   const ids = new Set<string>();
-  const deadConnIds: string[] = [];
 
-  // 1. Open SSE client streams
-  room.clients.forEach((sub, connId) => {
-    const lastBeat = room.authorHeartbeats?.get(sub.senderId) ?? now;
-    // If no heartbeat within 6 seconds, consider connection dead
-    if (now - lastBeat > HEARTBEAT_TIMEOUT_MS) {
-      deadConnIds.push(connId);
-    } else if (sub.senderId) {
+  // 1. Any currently open SSE client connection is actively connected
+  room.clients.forEach((sub) => {
+    if (sub.senderId) {
       ids.add(sub.senderId);
     }
   });
 
-  deadConnIds.forEach((id) => {
-    room.clients.delete(id);
-  });
-
-  // 2. Live author heartbeats (guarantees author 2 is detected immediately upon opening tab / polling)
+  // 2. Any author with a recent heartbeat within HEARTBEAT_TIMEOUT_MS (30s) is considered active
   if (room.authorHeartbeats) {
     const expiredAuthors: string[] = [];
     room.authorHeartbeats.forEach((lastBeat, senderId) => {
       if (now - lastBeat <= HEARTBEAT_TIMEOUT_MS) {
         ids.add(senderId);
       } else {
-        expiredAuthors.push(senderId);
+        // Only expire if this author does NOT have an open SSE connection
+        let hasActiveSSE = false;
+        room.clients.forEach((sub) => {
+          if (sub.senderId === senderId) hasActiveSSE = true;
+        });
+        if (!hasActiveSSE) {
+          expiredAuthors.push(senderId);
+        }
       }
     });
     expiredAuthors.forEach((sid) => room.authorHeartbeats?.delete(sid));
@@ -531,26 +534,69 @@ export interface WebRTCSignal {
   timestamp?: number;
 }
 
-// Broadcast WebRTC signaling data directly over SSE to the peer author
+// In-memory queueing for WebRTC signals to ensure zero signal loss even if SSE is reconnecting
+export function queuePendingSignal(roomId: string, targetAuthor: string, signal: WebRTCSignal): void {
+  const room = getOrCreateRoom(roomId);
+  if (!room.pendingSignals) {
+    room.pendingSignals = new Map();
+  }
+  const existing = room.pendingSignals.get(targetAuthor) || [];
+  const now = Date.now();
+  const valid = existing.filter((s) => now - (s.timestamp || now) < 30000);
+  valid.push({ ...signal, timestamp: now });
+  room.pendingSignals.set(targetAuthor, valid.slice(-5));
+}
+
+export function popPendingSignals(roomId: string, targetAuthor: string): WebRTCSignal[] {
+  const room = getOrCreateRoom(roomId);
+  if (!room.pendingSignals) return [];
+  const signals = room.pendingSignals.get(targetAuthor) || [];
+  if (signals.length > 0) {
+    room.pendingSignals.delete(targetAuthor);
+  }
+  const now = Date.now();
+  return signals.filter((s) => now - (s.timestamp || now) < 30000);
+}
+
+export function clearPendingSignals(roomId: string): void {
+  const room = getOrCreateRoom(roomId);
+  if (room.pendingSignals) {
+    room.pendingSignals.clear();
+  }
+}
+
+// Broadcast WebRTC signaling data directly over SSE to the peer author & queue for polling retrieval
 export function broadcastSignal(
   roomId: string,
   signal: WebRTCSignal
 ): { success: boolean; deliveredCount: number } {
   const room = getOrCreateRoom(roomId);
+  const now = Date.now();
+  const fullSignal: WebRTCSignal = {
+    ...signal,
+    timestamp: now,
+  };
   const payload = JSON.stringify({
     type: 'signal',
-    signal: {
-      ...signal,
-      timestamp: Date.now(),
-    },
+    signal: fullSignal,
   });
+
+  const targetAuthor =
+    signal.targetId || (signal.senderId === 'author-2' ? 'author-1' : 'author-2');
+
+  // Buffer in memory for targetAuthor so polling or delayed SSE pick it up
+  if (signal.type === 'preview-end' || signal.type === 'preview-decline') {
+    clearPendingSignals(roomId);
+  } else {
+    queuePendingSignal(roomId, targetAuthor, fullSignal);
+  }
 
   let deliveredCount = 0;
   const deadIds: string[] = [];
 
   room.clients.forEach((sub, id) => {
-    // Deliver exclusively to the OTHER author
-    if (sub.senderId !== signal.senderId) {
+    // Deliver exclusively to the other author or target author
+    if (sub.senderId !== signal.senderId || sub.senderId === targetAuthor) {
       try {
         const ok = sub.send(`data: ${payload}\n\n`);
         if (ok) {
@@ -569,11 +615,15 @@ export function broadcastSignal(
   // Also buffer in Redis with 25s TTL for cross-container serverless fallback
   const redis = getRedisClient();
   if (redis) {
-    const targetAuthor =
-      signal.targetId || (signal.senderId === 'author-2' ? 'author-1' : 'author-2');
-    redis.set(`room:${roomId}:signal:${targetAuthor}`, payload, { ex: 25 }).catch(() => {});
+    if (signal.type === 'preview-end' || signal.type === 'preview-decline') {
+      redis.del(`room:${roomId}:signal:${targetAuthor}`).catch(() => {});
+      redis.del(`room:${roomId}:signal:${signal.senderId}`).catch(() => {});
+    } else {
+      redis.set(`room:${roomId}:signal:${targetAuthor}`, payload, { ex: 25 }).catch(() => {});
+    }
   }
 
   return { success: true, deliveredCount };
 }
+
 

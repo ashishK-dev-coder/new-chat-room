@@ -45,9 +45,14 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
   onClearIncomingSignal,
   darkMode = false,
 }) => {
-  const [status, setStatus] = useState<'requesting' | 'connecting' | 'connected' | 'ended' | 'error'>(
+  const [status, setStatusState] = useState<'requesting' | 'connecting' | 'connected' | 'ended' | 'error'>(
     isInitiator ? 'requesting' : 'connecting'
   );
+  const statusRef = useRef(status);
+  const setStatus = useCallback((s: 'requesting' | 'connecting' | 'connected' | 'ended' | 'error') => {
+    statusRef.current = s;
+    setStatusState(s);
+  }, []);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [isFullScreen, setIsFullScreen] = useState(false);
@@ -189,6 +194,7 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
     iceCandidatesQueueRef.current = [];
 
     let isMounted = true;
+    let inviteInterval: NodeJS.Timeout | null = null;
 
     const setup = async () => {
       const stream = await startCamera();
@@ -198,8 +204,19 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
 
       if (isInitiator) {
         setStatus('requesting');
-        // Send preview invite to peer
+        // Send preview invite to peer immediately
         await sendSignal('preview-invite');
+
+        // Re-send preview-invite every 2.5s (up to 12 times = 30s) while waiting for peer response
+        let retries = 0;
+        inviteInterval = setInterval(() => {
+          if (!isMounted || retries >= 12 || statusRef.current !== 'requesting') {
+            if (inviteInterval) clearInterval(inviteInterval);
+            return;
+          }
+          retries++;
+          sendSignal('preview-invite').catch(() => {});
+        }, 2500);
       } else {
         setStatus('connecting');
         // Joining: notify initiator we accepted
@@ -229,10 +246,13 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
 
     return () => {
       isMounted = false;
+      if (inviteInterval) {
+        clearInterval(inviteInterval);
+      }
       window.removeEventListener('keydown', handleKeyDown);
       stopAllMedia();
     };
-  }, [isOpen, isInitiator, startCamera, initPeerConnection, sendSignal, stopAllMedia, handleEndPreview]);
+  }, [isOpen, isInitiator, startCamera, initPeerConnection, sendSignal, stopAllMedia, handleEndPreview, setStatus]);
 
   // Handle incoming signaling messages from peer
   useEffect(() => {
@@ -316,7 +336,7 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-[2px] p-2 sm:p-4 select-none animate-in fade-in duration-200"
+      className="fixed inset-0 z-[90] flex items-center justify-center bg-black/60 backdrop-blur-[2px] p-2 sm:p-4 select-none animate-in fade-in duration-200"
       onDoubleClick={(e) => {
         // Double-click outside modal instantly closes
         if (e.target === e.currentTarget) handleEndPreview();
