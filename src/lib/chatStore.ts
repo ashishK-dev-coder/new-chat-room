@@ -17,6 +17,23 @@ export interface ChatMessage {
   };
 }
 
+// Canonical chronological message sorting:
+// Oldest messages on TOP (smaller timestamp), newest messages at the BOTTOM (larger timestamp).
+// Guarantees new messages NEVER jump to the top or get inverted.
+export function sortChatMessages(a: ChatMessage, b: ChatMessage): number {
+  const timeA = a.timestamp || 0;
+  const timeB = b.timestamp || 0;
+  if (timeA !== timeB) {
+    return timeA - timeB; // Strictly chronological
+  }
+  const seqA = a.seq || 0;
+  const seqB = b.seq || 0;
+  if (seqA !== seqB) {
+    return seqA - seqB;
+  }
+  return (a.id || '').localeCompare(b.id || '');
+}
+
 export interface ClientSubscriber {
   id: string;
   senderId: string;
@@ -261,7 +278,8 @@ export async function addMessageToRoom(
   }
 
   // Monotonically increasing sequence counter without an extra Redis INCR command
-  const nextSeq = (room.seqCounter || 0) + 1;
+  const currentMaxSeq = room.messages.reduce((max, m) => Math.max(max, m.seq || 0), 0);
+  const nextSeq = Math.max(room.seqCounter || 0, currentMaxSeq) + 1;
   room.seqCounter = nextSeq;
 
   const newMsg: ChatMessage = {
@@ -283,13 +301,8 @@ export async function addMessageToRoom(
     room.messages = room.messages.map((m) => (m.id === newMsg.id ? { ...m, ...newMsg } : m));
   }
 
-  // Sort deterministically by seq ascending (and timestamp as fallback), strictly keeping last 4
-  room.messages = room.messages
-    .sort((a, b) => {
-      if (a.seq && b.seq && a.seq !== b.seq) return a.seq - b.seq;
-      return a.timestamp - b.timestamp;
-    })
-    .slice(-MAX_MESSAGES);
+  // Strictly chronological: oldest at top, newest at bottom, keeping strictly last 4
+  room.messages = room.messages.sort(sortChatMessages).slice(-MAX_MESSAGES);
 
   const authorCount = getActiveAuthorCount(room);
 
@@ -427,12 +440,7 @@ export function clearRoomMessages(roomId: string, senderId?: string): { success:
 export function getRoomMessages(roomId: string): ChatMessage[] {
   const room = rooms.get(roomId);
   if (!room) return [];
-  return [...room.messages]
-    .sort((a, b) => {
-      if (a.seq && b.seq && a.seq !== b.seq) return a.seq - b.seq;
-      return a.timestamp - b.timestamp;
-    })
-    .slice(-MAX_MESSAGES);
+  return [...room.messages].sort(sortChatMessages).slice(-MAX_MESSAGES);
 }
 
 export async function getRoomMessagesAsync(roomId: string): Promise<ChatMessage[]> {
@@ -462,10 +470,7 @@ export async function getRoomMessagesAsync(roomId: string): Promise<ChatMessage[
             }
           }
           room.messages = Array.from(merged.values())
-            .sort((a: ChatMessage, b: ChatMessage) => {
-              if (a.seq && b.seq && a.seq !== b.seq) return a.seq - b.seq;
-              return a.timestamp - b.timestamp;
-            })
+            .sort(sortChatMessages)
             .slice(-MAX_MESSAGES);
           return room.messages;
         }

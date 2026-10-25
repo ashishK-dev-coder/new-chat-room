@@ -2,7 +2,7 @@
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { CornerUpLeft, X, Clock, Check, CheckCheck, AlertCircle } from 'lucide-react';
-import { ChatMessage } from '@/lib/chatStore';
+import { ChatMessage, sortChatMessages } from '@/lib/chatStore';
 import { FontSettings } from './WordRibbon';
 
 interface DocumentCanvasProps {
@@ -205,7 +205,8 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
   }, [onPanicClear]);
 
-  // Focus textarea when unlocked and smoothly scroll to active clauses
+  // Focus textarea when unlocked and smoothly scroll to active clauses on new message append
+  const latestMsgKey = messages[messages.length - 1]?.id || messages[messages.length - 1]?.timestamp;
   useEffect(() => {
     if (isUnlocked) {
       inputRef.current?.focus();
@@ -214,19 +215,12 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
       }, 120);
       return () => clearTimeout(timer);
     }
-  }, [isUnlocked, messages.length]);
+  }, [isUnlocked, messages.length, latestMsgKey]);
 
   // When logged out (!isUnlocked), NO messages are shown on the UI!
-  // Strictly maintain at most 4 messages in ascending sequence/chronological order
+  // Strictly maintain at most 4 messages in ascending chronological order (oldest at top, newest at bottom)
   const displayedMessages = isUnlocked
-    ? [...messages]
-        .sort((a, b) => {
-          if (a.seq && b.seq && a.seq !== b.seq) return a.seq - b.seq;
-          if (a.seq && !b.seq) return -1;
-          if (!a.seq && b.seq) return 1;
-          return (a.timestamp || 0) - (b.timestamp || 0);
-        })
-        .slice(-4)
+    ? [...messages].sort(sortChatMessages).slice(-4)
     : [];
 
   // Clicking document canvas does NOT open password popup (only focuses if already unlocked)

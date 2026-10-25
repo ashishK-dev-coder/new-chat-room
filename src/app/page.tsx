@@ -9,7 +9,7 @@ import { PasswordModal } from '@/components/PasswordModal';
 import { DocumentCanvas } from '@/components/DocumentCanvas';
 import { WordStatusBar } from '@/components/WordStatusBar';
 import { SettingsModal } from '@/components/SettingsModal';
-import { ChatMessage } from '@/lib/chatStore';
+import { ChatMessage, sortChatMessages } from '@/lib/chatStore';
 
 // Deterministic message sorting (by monotonic seq first, timestamp fallback), deduplication, and strictly last 4 messages
 function mergeAndSortMessages(
@@ -56,16 +56,9 @@ function mergeAndSortMessages(
     }
   }
 
-  // Strictly sort: confirmed messages by monotonic seq ascending; pending optimistic at the end
+  // Strictly chronological sort: oldest at top (Clause 5.1), newest at bottom (Clause 5.4)
   const sorted = Array.from(map.values())
-    .sort((a, b) => {
-      if (a.seq && b.seq && a.seq !== b.seq) {
-        return a.seq - b.seq;
-      }
-      if (a.seq && !b.seq) return -1;
-      if (!a.seq && b.seq) return 1;
-      return (a.timestamp || 0) - (b.timestamp || 0);
-    })
+    .sort(sortChatMessages)
     .slice(-4); // Strictly maintain last 4 messages across both authors
 
   if (sorted.length !== prev.length) {
@@ -281,8 +274,18 @@ export default function WordChatApp() {
   }, []);
 
   // Trigger Word disguise system notification with phone's default ringtone/chime
+  // ONLY triggered when:
+  // 1. User is locked in Protected View (!isUnlockedRef.current), OR
+  // 2. User is not on the page / tab is backgrounded (document.hidden)
   const showWordNotification = useCallback(async () => {
     if (typeof window === 'undefined') return;
+
+    // IF user is actively chatting (unlocked and viewing foreground tab), NEVER fire system notification!
+    // This prevents Android Chrome from flagging the site as notification spam.
+    const isActivelyChatting = isUnlockedRef.current && typeof document !== 'undefined' && !document.hidden;
+    if (isActivelyChatting) {
+      return;
+    }
 
     if ('Notification' in window && Notification.permission === 'granted') {
       const notifTitle = 'Microsoft Word';
@@ -298,8 +301,9 @@ export default function WordChatApp() {
               icon: '/file.svg',
               badge: '/file.svg',
               tag: 'word-autosave-alert',
+              renotify: true,
               silent: false, // Ensures default phone notification sound plays!
-              vibrate: [300, 100, 300],
+              vibrate: [200],
             } as any);
             return;
           }
@@ -327,6 +331,7 @@ export default function WordChatApp() {
   }, []);
 
   // Multi-engine notification sound with single-chime guarantee (no double-beep/echo)
+  // ONLY fires when user is locked (!isUnlocked) or away (document.hidden)
   const playNotificationSound = useCallback(() => {
     // Cooldown throttle: Prevent any duplicate audio firing within 2.5 seconds
     const now = Date.now();
@@ -334,6 +339,15 @@ export default function WordChatApp() {
       return;
     }
     lastSoundPlayedAtRef.current = now;
+
+    // If user is actively chatting on the page, DO NOT fire loud phone ringtone alerts!
+    const isUserAwayOrLocked =
+      !isUnlockedRef.current ||
+      (typeof document !== 'undefined' && document.hidden);
+
+    if (!isUserAwayOrLocked) {
+      return;
+    }
 
     // 1. Mobile tactile haptic vibration (works on phones even in silent/vibrate mode)
     if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
@@ -654,10 +668,19 @@ export default function WordChatApp() {
                 notifiedMsgIdsRef.current.add(incomingMsg.id);
                 setParticipantCount(2);
 
-                // 1. If currently locked: activate subtle font color icon blink
-                if (!isUnlockedRef.current) {
-                  setIsFontColorBlinking(true);
-                } else {
+                const isUserAwayOrLocked =
+                  !isUnlockedRef.current ||
+                  (typeof document !== 'undefined' && document.hidden);
+
+                // Only alert if locked or away
+                if (isUserAwayOrLocked) {
+                  if (!isUnlockedRef.current) {
+                    setIsFontColorBlinking(true);
+                  }
+                  playNotificationSound();
+                }
+
+                if (isUnlockedRef.current) {
                   // If unlocked: mark as seen immediately (with deduplication)
                   if (!markedSeenIdsRef.current.has(incomingMsg.id)) {
                     markedSeenIdsRef.current.add(incomingMsg.id);
@@ -674,9 +697,6 @@ export default function WordChatApp() {
                     });
                   }
                 }
-
-                // 2. Play EXACTLY ONE notification sound
-                playNotificationSound();
               }
             }
           } else if (data.type === 'seen' && Array.isArray(data.messageIds)) {
@@ -782,11 +802,18 @@ export default function WordChatApp() {
 
             if (unnotifiedPeerMessages.length > 0) {
               unnotifiedPeerMessages.forEach((m: ChatMessage) => notifiedMsgIdsRef.current.add(m.id));
-              if (!isUnlockedRef.current) {
-                setIsFontColorBlinking(true);
+
+              const isUserAwayOrLocked =
+                !isUnlockedRef.current ||
+                (typeof document !== 'undefined' && document.hidden);
+
+              // Only alert if locked or away
+              if (isUserAwayOrLocked) {
+                if (!isUnlockedRef.current) {
+                  setIsFontColorBlinking(true);
+                }
+                playNotificationSound();
               }
-              // Play EXACTLY ONE notification sound
-              playNotificationSound();
             }
 
             setMessages((prev) => {
