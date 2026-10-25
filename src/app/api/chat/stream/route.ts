@@ -4,7 +4,8 @@ import { getOrCreateRoom, getRoomMessages, subscribeToRoom, getActiveAuthorCount
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const roomId = searchParams.get('room') || 'default-room';
-  const senderId = searchParams.get('senderId') || `author_${Date.now()}`;
+  const rawSenderId = searchParams.get('senderId');
+  const senderId = rawSenderId === 'author-2' ? 'author-2' : 'author-1';
 
   // Ensure room exists
   const room = getOrCreateRoom(roomId);

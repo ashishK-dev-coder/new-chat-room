@@ -80,17 +80,19 @@ export default function WordChatApp() {
   const lastSoundPlayedAtRef = useRef<number>(0);
 
   useEffect(() => {
-    // Generate or retrieve stable unique author ID per tab / window
-    // Uses sessionStorage so two tabs on same device/browser are recognized as distinct Author 1 and Author 2
-    let authorId: string | null = null;
+    // Strictly identify Author 1 vs Author 2 without random tokens
+    let authorId = 'author-1';
     try {
-      authorId = sessionStorage.getItem('word_tab_author_id');
-      if (!authorId) {
-        authorId = `author_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+      const stored = sessionStorage.getItem('word_tab_author_id');
+      if (stored === 'author-1' || stored === 'author-2') {
+        authorId = stored;
+      } else {
+        const storedPwd = sessionStorage.getItem('word_tab_password');
+        authorId = storedPwd === '222' ? 'author-2' : 'author-1';
         sessionStorage.setItem('word_tab_author_id', authorId);
       }
     } catch {
-      authorId = `author_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+      authorId = 'author-1';
     }
     setTabAuthorId(authorId);
     tabAuthorIdRef.current = authorId;
@@ -394,9 +396,14 @@ export default function WordChatApp() {
       const unlockedSession = sessionStorage.getItem(`word_unlocked_${activeRoom}`);
       const storedPwd = sessionStorage.getItem('word_tab_password');
       const storedAuthorId = sessionStorage.getItem('word_tab_author_id');
-      if (storedAuthorId) {
+      if (storedAuthorId === 'author-1' || storedAuthorId === 'author-2') {
         setTabAuthorId(storedAuthorId);
         tabAuthorIdRef.current = storedAuthorId;
+      } else {
+        const resolvedId = storedPwd === '222' ? 'author-2' : 'author-1';
+        setTabAuthorId(resolvedId);
+        tabAuthorIdRef.current = resolvedId;
+        sessionStorage.setItem('word_tab_author_id', resolvedId);
       }
       if (unlockedSession === 'true' && storedPwd) {
         setIsUnlocked(true);
@@ -517,7 +524,7 @@ export default function WordChatApp() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           roomId,
-          senderId: tabAuthorIdRef.current || 'author-local',
+          senderId: tabAuthorIdRef.current === 'author-2' ? 'author-2' : 'author-1',
         }),
       });
     } catch (err) {
@@ -652,9 +659,10 @@ export default function WordChatApp() {
               const withoutOpt = prev.filter(
                 (m) =>
                   !(
-                    m.senderId === incomingMsg.senderId &&
-                    m.text === incomingMsg.text &&
-                    (m.status === 'pending' || m.id.startsWith('msg-opt-'))
+                    m.id === incomingMsg.id ||
+                    (m.senderId === incomingMsg.senderId &&
+                      m.text === incomingMsg.text &&
+                      (m.status === 'pending' || m.id.startsWith('msg-opt-')))
                   )
               );
               const { next } = mergeAndSortMessages(withoutOpt, [incomingMsg]);
@@ -907,7 +915,11 @@ export default function WordChatApp() {
     if (!text.trim()) return;
 
     lastActivityTime.current = Date.now();
-    const activeId = tabAuthorIdRef.current || tabAuthorId || `tab_${Date.now()}`;
+    const activeId =
+      tabAuthorIdRef.current === 'author-2' || tabAuthorId === 'author-2'
+        ? 'author-2'
+        : 'author-1';
+    const activeName = activeId === 'author-2' ? 'Author 2' : 'Author 1';
     const trimmedText = text.trim();
     // Unique deterministic message ID generated upfront
     const messageId = `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
@@ -919,7 +931,7 @@ export default function WordChatApp() {
     const optimisticMsg: ChatMessage = {
       id: messageId,
       senderId: activeId,
-      senderName: 'Author',
+      senderName: activeName,
       text: trimmedText,
       timestamp: Date.now(),
       status: 'pending', // Starts with pending...
@@ -940,7 +952,7 @@ export default function WordChatApp() {
           id: messageId,
           roomId,
           senderId: activeId,
-          senderName: 'Author',
+          senderName: activeName,
           text: trimmedText,
           password: roomPassword,
           replyTo,

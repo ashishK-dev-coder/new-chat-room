@@ -6,7 +6,8 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const roomId = searchParams.get('room') || 'default-room';
-    const senderId = searchParams.get('senderId');
+    const rawSenderId = searchParams.get('senderId');
+    const senderId = rawSenderId === 'author-2' ? 'author-2' : rawSenderId === 'author-1' ? 'author-1' : null;
 
     const room = getOrCreateRoom(roomId);
     if (senderId) {

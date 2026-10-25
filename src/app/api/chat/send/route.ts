@@ -10,18 +10,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Message cannot be empty' }, { status: 400 });
     }
 
-    // Authenticate author by password and resolve official author identity
-    let resolvedSenderId = senderId || 'author-1';
-    let resolvedSenderName = senderName || 'Author';
-
-    if (password !== undefined) {
-      const auth = authenticateAuthor(password);
-      if (!auth.valid) {
-        return NextResponse.json({ error: 'Unauthorized: Invalid author password' }, { status: 401 });
-      }
-      resolvedSenderId = auth.authorId || resolvedSenderId;
-      resolvedSenderName = auth.authorName || resolvedSenderName;
+    // Authenticate author by password and strictly resolve official author identity (author-1 vs author-2)
+    if (!password) {
+      return NextResponse.json({ error: 'Unauthorized: Author password required' }, { status: 401 });
     }
+
+    const auth = authenticateAuthor(password);
+    if (!auth.valid || !auth.authorId) {
+      return NextResponse.json({ error: 'Unauthorized: Invalid author password' }, { status: 401 });
+    }
+
+    const resolvedSenderId = auth.authorId;
+    const resolvedSenderName = auth.authorName || (auth.authorId === 'author-2' ? 'Author 2' : 'Author 1');
 
     const result = await addMessageToRoom(roomId, {
       id,

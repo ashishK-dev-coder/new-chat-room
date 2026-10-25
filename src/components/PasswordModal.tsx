@@ -121,6 +121,31 @@ export const PasswordModal: React.FC<PasswordModalProps> = ({
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
+
+            {/* Author Role Quick-Select */}
+            <div className="flex items-center space-x-1.5 pt-1">
+              <span className="text-[10px] text-[#605e5c] font-medium">Select Author:</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setPassword('111');
+                  setErrorMsg(null);
+                }}
+                className="px-2 py-0.5 rounded text-[10px] font-semibold bg-[#0078d4]/10 hover:bg-[#0078d4]/20 text-[#0078d4] border border-[#0078d4]/30 cursor-pointer transition-colors"
+              >
+                Author 1 (111)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPassword('222');
+                  setErrorMsg(null);
+                }}
+                className="px-2 py-0.5 rounded text-[10px] font-semibold bg-[#107c41]/10 hover:bg-[#107c41]/20 text-[#107c41] border border-[#107c41]/30 cursor-pointer transition-colors"
+              >
+                Author 2 (222)
+              </button>
+            </div>
           </div>
 
           {/* Error Message */}
