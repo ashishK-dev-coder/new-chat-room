@@ -522,3 +522,58 @@ export function authenticateAuthor(passwordAttempt: string): AuthorAuthResult {
 export function verifyRoomPassword(_roomId: string, passwordAttempt: string): boolean {
   return authenticateAuthor(passwordAttempt).valid;
 }
+
+export interface WebRTCSignal {
+  type: 'preview-invite' | 'preview-accept' | 'preview-decline' | 'preview-end' | 'offer' | 'answer' | 'candidate';
+  senderId: string;
+  targetId?: string;
+  data?: unknown;
+  timestamp?: number;
+}
+
+// Broadcast WebRTC signaling data directly over SSE to the peer author
+export function broadcastSignal(
+  roomId: string,
+  signal: WebRTCSignal
+): { success: boolean; deliveredCount: number } {
+  const room = getOrCreateRoom(roomId);
+  const payload = JSON.stringify({
+    type: 'signal',
+    signal: {
+      ...signal,
+      timestamp: Date.now(),
+    },
+  });
+
+  let deliveredCount = 0;
+  const deadIds: string[] = [];
+
+  room.clients.forEach((sub, id) => {
+    // Deliver exclusively to the OTHER author
+    if (sub.senderId !== signal.senderId) {
+      try {
+        const ok = sub.send(`data: ${payload}\n\n`);
+        if (ok) {
+          deliveredCount++;
+        } else {
+          deadIds.push(id);
+        }
+      } catch {
+        deadIds.push(id);
+      }
+    }
+  });
+
+  deadIds.forEach((id) => room.clients.delete(id));
+
+  // Also buffer in Redis with 25s TTL for cross-container serverless fallback
+  const redis = getRedisClient();
+  if (redis) {
+    const targetAuthor =
+      signal.targetId || (signal.senderId === 'author-2' ? 'author-1' : 'author-2');
+    redis.set(`room:${roomId}:signal:${targetAuthor}`, payload, { ex: 25 }).catch(() => {});
+  }
+
+  return { success: true, deliveredCount };
+}
+

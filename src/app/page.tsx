@@ -9,7 +9,9 @@ import { PasswordModal } from '@/components/PasswordModal';
 import { DocumentCanvas } from '@/components/DocumentCanvas';
 import { WordStatusBar } from '@/components/WordStatusBar';
 import { SettingsModal } from '@/components/SettingsModal';
-import { ChatMessage, sortChatMessages } from '@/lib/chatStore';
+import { VideoPreviewModal } from '@/components/VideoPreviewModal';
+import { ChatMessage, sortChatMessages, WebRTCSignal } from '@/lib/chatStore';
+import { Eye, X } from 'lucide-react';
 
 // Deterministic message sorting (by monotonic seq first, timestamp fallback), deduplication, and strictly last 4 messages
 function mergeAndSortMessages(
@@ -106,10 +108,16 @@ export default function WordChatApp() {
   const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
   const [roomPassword, setRoomPassword] = useState<string>('');
 
-  // Messages (Strict sliding buffer of max 4 messages)
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [participantCount, setParticipantCount] = useState<number>(1);
   const [peerTyping] = useState<boolean>(false);
+
+  // Video Preview Call States (WebRTC P2P Visual Only, Muted, No Audio)
+  const [showPreviewConfirm, setShowPreviewConfirm] = useState<boolean>(false);
+  const [incomingPreviewInvite, setIncomingPreviewInvite] = useState<{ from: string } | null>(null);
+  const [isPreviewActive, setIsPreviewActive] = useState<boolean>(false);
+  const [isInitiator, setIsInitiator] = useState<boolean>(false);
+  const [incomingSignal, setIncomingSignal] = useState<WebRTCSignal | null>(null);
 
   // Stealth Notification Alert when logged out
   const [isFontColorBlinking, setIsFontColorBlinking] = useState<boolean>(false);
@@ -436,6 +444,10 @@ export default function WordChatApp() {
         const elapsed = Date.now() - lastActivityTime.current;
         if (elapsed >= 5 * 60 * 1000) {
           setIsUnlocked(false);
+          setIsPreviewActive(false);
+          setShowPreviewConfirm(false);
+          setIncomingPreviewInvite(null);
+          setIncomingSignal(null);
           if (typeof window !== 'undefined') {
             sessionStorage.removeItem(`word_unlocked_${roomId}`);
           }
@@ -489,6 +501,10 @@ export default function WordChatApp() {
   const handlePanicLock = useCallback(() => {
     setIsUnlocked(false);
     setShowPasswordModal(false);
+    setIsPreviewActive(false);
+    setShowPreviewConfirm(false);
+    setIncomingPreviewInvite(null);
+    setIncomingSignal(null);
     if (typeof window !== 'undefined') {
       sessionStorage.removeItem(`word_unlocked_${roomId}`);
     }
@@ -516,6 +532,10 @@ export default function WordChatApp() {
     setMessages([]);
     setIsUnlocked(false);
     setShowPasswordModal(false);
+    setIsPreviewActive(false);
+    setShowPreviewConfirm(false);
+    setIncomingPreviewInvite(null);
+    setIncomingSignal(null);
 
     // 3. Clear on server and notify peer author
     try {
@@ -606,6 +626,55 @@ export default function WordChatApp() {
     window.addEventListener('pointerdown', handleRapidTap, { capture: true, passive: true });
     return () => window.removeEventListener('pointerdown', handleRapidTap, { capture: true });
   }, [handleRoomWipe]);
+
+  // Send WebRTC Signal to Peer Author
+  const sendSignal = useCallback(
+    async (type: WebRTCSignal['type'], data?: unknown) => {
+      const activeId =
+        tabAuthorIdRef.current === 'author-2' || tabAuthorId === 'author-2'
+          ? 'author-2'
+          : 'author-1';
+      try {
+        await fetch('/api/chat/signal', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            roomId,
+            senderId: activeId,
+            password: roomPassword,
+            type,
+            data,
+          }),
+        });
+      } catch (err) {
+        console.error('Signal transmission error:', err);
+      }
+    },
+    [roomId, roomPassword, tabAuthorId]
+  );
+
+  // Handle incoming WebRTC signaling packets
+  const handleIncomingSignal = useCallback(
+    (sig: WebRTCSignal) => {
+      const currentTabId = tabAuthorIdRef.current || tabAuthorId;
+      if (sig.senderId === currentTabId) return;
+
+      if (sig.type === 'preview-invite') {
+        // Peer requested preview: show Join / Decline prompt (STRICTLY NO SOUND, NO VIBRATION)
+        setIncomingPreviewInvite({ from: sig.senderId });
+      } else if (sig.type === 'preview-decline') {
+        setIncomingPreviewInvite(null);
+        setIncomingSignal(sig);
+      } else if (sig.type === 'preview-end') {
+        setIncomingPreviewInvite(null);
+        setIsPreviewActive(false);
+        setIncomingSignal(sig);
+      } else {
+        setIncomingSignal(sig);
+      }
+    },
+    [tabAuthorId]
+  );
 
   // Connect to Server-Sent Events (SSE) for real-time updates
   useEffect(() => {
@@ -730,6 +799,8 @@ export default function WordChatApp() {
             if (typeof window !== 'undefined') {
               sessionStorage.removeItem(`word_chat_msgs_${roomId}`);
             }
+          } else if (data.type === 'signal' && data.signal) {
+            handleIncomingSignal(data.signal);
           } else if (data.type === 'presence') {
             const count = Math.min(2, Math.max(1, Number(data.clientCount) || 1));
             setParticipantCount(count);
@@ -865,6 +936,11 @@ export default function WordChatApp() {
                 });
               }
             }
+          }
+
+          if (data?.signal) {
+            const sig = data.signal.signal || data.signal;
+            handleIncomingSignal(sig);
           }
 
           if (data?.clientCount !== undefined) {
@@ -1138,6 +1214,12 @@ export default function WordChatApp() {
           onPanicClear={handlePanicLock}
           onPanicWipe={handleRoomWipe}
           peerTyping={peerTyping}
+          participantCount={participantCount}
+          onOpenPreview={() => {
+            if (participantCount >= 2) {
+              setShowPreviewConfirm(true);
+            }
+          }}
           darkMode={darkMode}
           zoomLevel={zoomLevel}
         />
@@ -1182,6 +1264,152 @@ export default function WordChatApp() {
         currentPassword={roomPassword}
         setCurrentPassword={setRoomPassword}
         onRequestNotification={requestNotificationPermission}
+      />
+
+      {/* 1. Preview Confirmation Dialog ("Ask Yes or No") */}
+      {showPreviewConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-[1px] p-4 select-none animate-in fade-in duration-150">
+          <div className="w-full max-w-sm bg-white dark:bg-[#252526] rounded-md shadow-2xl border border-[#c8c6c4] dark:border-[#3e3e42] overflow-hidden text-xs">
+            <div className="bg-[#f3f2f1] dark:bg-[#1e1e1e] border-b border-[#e1dfdd] dark:border-[#333] px-3 py-2 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <div className="w-4 h-4 bg-[#185abd] text-white rounded flex items-center justify-center text-[10px] font-bold">
+                  W
+                </div>
+                <span className="font-semibold text-xs text-[#323130] dark:text-[#f3f4f6]">
+                  Document Visual Preview
+                </span>
+              </div>
+              <button
+                onClick={() => setShowPreviewConfirm(false)}
+                className="p-1 hover:bg-[#e1dfdd] dark:hover:bg-[#333] rounded text-[#605e5c] dark:text-[#9ca3af] transition-colors"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3">
+              <div className="flex items-start space-x-3">
+                <div className="p-2 bg-blue-50 dark:bg-blue-900/30 rounded-full border border-blue-200 dark:border-blue-800 shrink-0 text-[#185abd] dark:text-blue-300">
+                  <Eye className="w-5 h-5" />
+                </div>
+                <div className="space-y-1">
+                  <p className="font-medium text-[#201f1e] dark:text-[#f3f4f6] text-xs">
+                    Start live visual preview with co-author?
+                  </p>
+                  <p className="text-[#605e5c] dark:text-[#9ca3af] text-[11px] leading-relaxed">
+                    This will open a direct peer-to-peer visual stream. Audio is strictly muted and no notifications will be sounded.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end space-x-2 pt-2 border-t border-[#f3f2f1] dark:border-[#333]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowPreviewConfirm(false);
+                    setIsInitiator(true);
+                    setIsPreviewActive(true);
+                  }}
+                  className="px-4 py-1.5 bg-[#0078d4] hover:bg-[#106ebe] text-white rounded text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+                >
+                  Yes, Start Preview
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowPreviewConfirm(false)}
+                  className="px-4 py-1.5 bg-[#f3f2f1] hover:bg-[#edebe9] dark:bg-[#333] dark:hover:bg-[#444] text-[#201f1e] dark:text-[#f3f4f6] border border-[#8a8886] rounded text-xs font-medium transition-colors cursor-pointer"
+                >
+                  No, Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2. Incoming Preview Request Dialog (Join or Decline) */}
+      {incomingPreviewInvite && !isPreviewActive && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-[1px] p-4 select-none animate-in fade-in duration-150">
+          <div className="w-full max-w-sm bg-white dark:bg-[#252526] rounded-md shadow-2xl border border-[#c8c6c4] dark:border-[#3e3e42] overflow-hidden text-xs">
+            <div className="bg-[#185abd] text-white px-3 py-2 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <div className="w-4 h-4 bg-white/20 rounded flex items-center justify-center text-[10px] font-bold">
+                  W
+                </div>
+                <span className="font-semibold text-xs">
+                  Document Preview Request
+                </span>
+              </div>
+              <button
+                onClick={() => {
+                  sendSignal('preview-decline');
+                  setIncomingPreviewInvite(null);
+                }}
+                className="p-1 hover:bg-white/20 rounded text-white transition-colors"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3">
+              <div className="flex items-start space-x-3">
+                <div className="p-2 bg-emerald-50 dark:bg-emerald-900/30 rounded-full border border-emerald-200 dark:border-emerald-800 shrink-0 text-emerald-600 dark:text-emerald-400">
+                  <Eye className="w-5 h-5 animate-pulse" />
+                </div>
+                <div className="space-y-1">
+                  <p className="font-semibold text-[#201f1e] dark:text-[#f3f4f6] text-xs">
+                    Co-author ({incomingPreviewInvite.from === 'author-2' ? 'Author 2' : 'Author 1'}) has started Document Preview.
+                  </p>
+                  <p className="text-[#605e5c] dark:text-[#9ca3af] text-[11px] leading-relaxed">
+                    Would you like to join the visual preview? Audio is strictly muted.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end space-x-2 pt-2 border-t border-[#f3f2f1] dark:border-[#333]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIncomingPreviewInvite(null);
+                    setIsInitiator(false);
+                    setIsPreviewActive(true);
+                  }}
+                  className="px-4 py-1.5 bg-[#107c41] hover:bg-[#0e6b37] text-white rounded text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+                >
+                  Join Preview
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    sendSignal('preview-decline');
+                    setIncomingPreviewInvite(null);
+                  }}
+                  className="px-4 py-1.5 bg-[#f3f2f1] hover:bg-[#edebe9] dark:bg-[#333] dark:hover:bg-[#444] text-[#201f1e] dark:text-[#f3f4f6] border border-[#8a8886] rounded text-xs font-medium transition-colors cursor-pointer"
+                >
+                  Decline
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 3. Live Video Preview Modal (WebRTC P2P Visual Stream, strictly muted) */}
+      <VideoPreviewModal
+        isOpen={isPreviewActive}
+        isInitiator={isInitiator}
+        currentAuthorId={tabAuthorId === 'author-2' ? 'author-2' : 'author-1'}
+        peerAuthorName={tabAuthorId === 'author-2' ? 'Author 1' : 'Author 2'}
+        roomId={roomId}
+        onClose={() => {
+          setIsPreviewActive(false);
+          setIsInitiator(false);
+          setIncomingSignal(null);
+        }}
+        sendSignal={sendSignal}
+        incomingSignal={incomingSignal}
+        onClearIncomingSignal={() => setIncomingSignal(null)}
+        darkMode={darkMode}
       />
     </div>
   );

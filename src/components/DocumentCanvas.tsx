@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { CornerUpLeft, X, Clock, Check, CheckCheck, AlertCircle } from 'lucide-react';
+import { CornerUpLeft, X, Clock, Check, CheckCheck, AlertCircle, Eye } from 'lucide-react';
 import { ChatMessage, sortChatMessages } from '@/lib/chatStore';
 import { FontSettings } from './WordRibbon';
 
@@ -16,6 +16,8 @@ interface DocumentCanvasProps {
   onPanicClear: () => void;
   onPanicWipe?: () => void;
   peerTyping: boolean;
+  participantCount?: number;
+  onOpenPreview?: () => void;
   darkMode?: boolean;
   zoomLevel?: number;
 }
@@ -72,6 +74,8 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   onPanicClear,
   onPanicWipe,
   peerTyping,
+  participantCount = 1,
+  onOpenPreview,
   darkMode = false,
   zoomLevel = 100,
 }) => {
@@ -728,6 +732,38 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                 darkMode ? 'text-[#9ca3af] border-[#34d399]' : 'text-[#6b7280] border-[#107c41]'
               }`}>
                 Co-author is reviewing clause...
+              </div>
+            )}
+
+            {/* End of Page: See preview option */}
+            {isUnlocked && onOpenPreview && (
+              <div className="mt-5 pt-3 border-t border-dashed border-[#c8c6c4] dark:border-[#3e3e42] flex items-center justify-between select-none">
+                <div className="flex items-center space-x-1.5 text-[9pt] sm:text-[9.5pt] text-[#605e5c] dark:text-[#9ca3af]">
+                  <Eye className="w-3.5 h-3.5 text-[#185abd]" />
+                  <span className="font-medium">Document Visual Preview:</span>
+                </div>
+
+                {participantCount >= 2 ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenPreview();
+                    }}
+                    className="px-2.5 py-1 text-[9pt] sm:text-[9.5pt] font-semibold rounded bg-[#185abd]/10 hover:bg-[#185abd]/20 text-[#185abd] dark:text-blue-300 dark:bg-blue-900/30 dark:hover:bg-blue-900/50 border border-[#185abd]/30 cursor-pointer transition-all flex items-center space-x-1.5 shadow-xs"
+                    title="Start visual preview (Both authors online)"
+                  >
+                    <span>See preview</span>
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  </button>
+                ) : (
+                  <div
+                    className="px-2 py-0.5 text-[8.5pt] text-[#a19f9d] dark:text-[#71717a] italic bg-black/5 dark:bg-white/5 rounded border border-black/5 select-none"
+                    title="Visual preview requires both authors to be online"
+                  >
+                    See preview (Waiting for co-author...)
+                  </div>
+                )}
               </div>
             )}
           </div>

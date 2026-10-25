@@ -17,10 +17,25 @@ export async function GET(req: NextRequest) {
     const messages = await getRoomMessagesAsync(roomId);
     const clientCount = getActiveAuthorCount(room);
 
+    let pendingSignal = null;
+    const redis = getRedisClient();
+    if (redis && senderId) {
+      try {
+        const raw = await redis.get<string | object>(`room:${roomId}:signal:${senderId}`);
+        if (raw) {
+          pendingSignal = typeof raw === 'string' ? JSON.parse(raw) : raw;
+          redis.del(`room:${roomId}:signal:${senderId}`).catch(() => {});
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     return NextResponse.json(
       {
         messages,
         clientCount,
+        signal: pendingSignal,
         timestamp: Date.now(),
       },
       {
