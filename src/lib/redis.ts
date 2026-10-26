@@ -34,11 +34,12 @@ export function getRedisClient(): Redis | null {
           const msg = err instanceof Error ? err.message : String(err);
           if (msg.includes('NOPERM')) {
             isWritable = false;
-            console.error(
-              '\n[REDIS PERMISSION ALERT]\n' +
-              'The UPSTASH_REDIS_REST_TOKEN in your environment is a READ-ONLY token.\n' +
-              'Upstash rejected writes with NOPERM. To enable multi-lambda cross-sync,\n' +
-              'please replace it with the standard Read-Write UPSTASH_REDIS_REST_TOKEN from https://console.upstash.com.\n'
+            console.warn(
+              '\n[Upstash Redis Notice]\n' +
+              'The UPSTASH_REDIS_REST_TOKEN in your environment is currently READ-ONLY (NOPERM).\n' +
+              '-> The chat platform is operating 100% in persistent in-memory mode without errors.\n' +
+              '-> To enable Redis backup across server cold restarts, update UPSTASH_REDIS_REST_TOKEN in your\n' +
+              '   Render Environment with the primary Read-Write token from https://console.upstash.com.\n'
             );
           } else {
             console.warn('[Redis] Write test warning:', msg);
@@ -59,4 +60,11 @@ export function getRedisClient(): Redis | null {
 
 export function isRedisWritable(): boolean {
   return isWritable;
+}
+
+export function markRedisNonWritable(err?: unknown): void {
+  const msg = err instanceof Error ? err.message : String(err || '');
+  if (msg.includes('NOPERM')) {
+    isWritable = false;
+  }
 }

@@ -1,5 +1,5 @@
 import webpush from 'web-push';
-import { getRedisClient } from '@/lib/redis';
+import { getRedisClient, isRedisWritable, markRedisNonWritable } from '@/lib/redis';
 
 export const VAPID_PUBLIC_KEY =
   process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ||
@@ -31,13 +31,13 @@ export async function savePushSubscription(
   inMemorySubscriptions.set(key, subscription);
 
   const redis = getRedisClient();
-  if (redis) {
+  if (redis && isRedisWritable()) {
     try {
       await redis.set(`room:${roomId}:push:${authorId}`, JSON.stringify(subscription), {
         ex: 30 * 24 * 3600, // 30 days
       });
-    } catch {
-      // ignore
+    } catch (err) {
+      markRedisNonWritable(err);
     }
   }
 }
@@ -88,8 +88,8 @@ export async function sendPushToAuthor(
       // Expired or unsubscribed
       inMemorySubscriptions.delete(`${roomId}:${authorId}`);
       const redis = getRedisClient();
-      if (redis) {
-        redis.del(`room:${roomId}:push:${authorId}`).catch(() => {});
+      if (redis && isRedisWritable()) {
+        redis.del(`room:${roomId}:push:${authorId}`).catch(markRedisNonWritable);
       }
     }
     return false;

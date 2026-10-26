@@ -1,4 +1,4 @@
-import { getRedisClient } from './redis';
+import { getRedisClient, isRedisWritable, markRedisNonWritable } from './redis';
 
 // Ephemeral store for strictly 2-person real-time chat with optional Upstash Redis Pub/Sub support
 export interface ChatMessage {
@@ -132,12 +132,12 @@ export async function syncAuthorPresenceAsync(
 
   // Background non-blocking Redis presence sync (never stalls the HTTP response)
   const redis = getRedisClient();
-  if (redis) {
+  if (redis && isRedisWritable()) {
     const presenceKey = `room:${roomId}:presence:${authorId}`;
     if (unlocked) {
-      redis.set(presenceKey, '1', { ex: 35 }).catch(() => {});
+      redis.set(presenceKey, '1', { ex: 35 }).catch(markRedisNonWritable);
     } else {
-      redis.del(presenceKey).catch(() => {});
+      redis.del(presenceKey).catch(markRedisNonWritable);
     }
   }
 
@@ -197,8 +197,8 @@ export function removeAuthorFromRoom(roomId: string, senderId: string): void {
 
   // 3. Clear Redis presence immediately
   const redis = getRedisClient();
-  if (redis) {
-    redis.del(`room:${roomId}:presence:${senderId}`).catch(() => {});
+  if (redis && isRedisWritable()) {
+    redis.del(`room:${roomId}:presence:${senderId}`).catch(markRedisNonWritable);
   }
 
   // 4. Immediately broadcast updated presence
@@ -412,8 +412,8 @@ export async function addMessageToRoom(
 
   // Sync to Redis with 1 single command (SET), updating server cache timestamp
   room.lastRedisFetchTime = Date.now();
-  if (redis) {
-    redis.set(`room:${roomId}:messages`, JSON.stringify(room.messages), { ex: 86400 }).catch(() => {});
+  if (redis && isRedisWritable()) {
+    redis.set(`room:${roomId}:messages`, JSON.stringify(room.messages), { ex: 86400 }).catch(markRedisNonWritable);
   }
 
   return { success: true, messages: room.messages, message: newMsg };
@@ -479,8 +479,8 @@ export async function markMessagesAsSeen(
 
     // Exactly 1 Redis command (SET)
     room.lastRedisFetchTime = Date.now();
-    if (redis) {
-      redis.set(`room:${roomId}:messages`, JSON.stringify(room.messages), { ex: 86400 }).catch(() => {});
+    if (redis && isRedisWritable()) {
+      redis.set(`room:${roomId}:messages`, JSON.stringify(room.messages), { ex: 86400 }).catch(markRedisNonWritable);
     }
   }
 
@@ -512,8 +512,8 @@ export function clearRoomMessages(roomId: string, senderId?: string): { success:
   deadIds.forEach((id) => room.clients.delete(id));
 
   const redis = getRedisClient();
-  if (redis) {
-    redis.del(`room:${roomId}:messages`).catch(() => {});
+  if (redis && isRedisWritable()) {
+    redis.del(`room:${roomId}:messages`).catch(markRedisNonWritable);
   }
 
   return { success: true };
@@ -689,16 +689,16 @@ export async function broadcastSignal(
 
   // 2. Non-blocking asynchronous Redis queueing (never stalls the HTTP response)
   const redis = getRedisClient();
-  if (redis) {
+  if (redis && isRedisWritable()) {
     const listKey = `room:${roomId}:signals:${targetAuthor}`;
     if (signal.type === 'preview-end' || signal.type === 'preview-decline') {
-      redis.del(listKey).catch(() => {});
-      redis.del(`room:${roomId}:signals:${signal.senderId}`).catch(() => {});
-      redis.rpush(listKey, JSON.stringify(fullSignal)).catch(() => {});
-      redis.expire(listKey, 30).catch(() => {});
+      redis.del(listKey).catch(markRedisNonWritable);
+      redis.del(`room:${roomId}:signals:${signal.senderId}`).catch(markRedisNonWritable);
+      redis.rpush(listKey, JSON.stringify(fullSignal)).catch(markRedisNonWritable);
+      redis.expire(listKey, 30).catch(markRedisNonWritable);
     } else {
-      redis.rpush(listKey, JSON.stringify(fullSignal)).catch(() => {});
-      redis.expire(listKey, 60).catch(() => {});
+      redis.rpush(listKey, JSON.stringify(fullSignal)).catch(markRedisNonWritable);
+      redis.expire(listKey, 60).catch(markRedisNonWritable);
     }
   }
 
@@ -722,7 +722,9 @@ export async function popAllSignalsAsync(roomId: string, targetAuthor: string): 
       const listKey = `room:${roomId}:signals:${targetAuthor}`;
       const rawList = await redis.lrange<string[]>(listKey, 0, -1);
       if (Array.isArray(rawList) && rawList.length > 0) {
-        redis.del(listKey).catch(() => {});
+        if (isRedisWritable()) {
+          redis.del(listKey).catch(markRedisNonWritable);
+        }
         rawList.forEach((raw) => {
           try {
             const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
