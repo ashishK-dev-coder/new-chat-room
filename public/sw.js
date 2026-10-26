@@ -28,17 +28,29 @@ self.addEventListener('push', (event) => {
   }
 
   event.waitUntil(
-    self.registration.showNotification(payload.title || 'Document Notice', {
-      body: payload.body || 'New clause updated in document framework.',
-      icon: '/file.svg',
-      badge: '/file.svg',
-      tag: 'doc-notice',
-      renotify: true, // Always re-trigger sound & vibration on mobile for new messages
-      silent: false, // Ensures default phone notification chime/ringtone plays
-      vibrate: [300, 150, 300],
-      data: {
-        url: '/',
-      },
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      // Check if user has an active, visible document window open on screen
+      // If user is currently online looking at the page or live video preview, suppress push notification completely!
+      const isVisibleOnScreen = clientList.some(
+        (client) => client.visibilityState === 'visible'
+      );
+
+      if (isVisibleOnScreen) {
+        return;
+      }
+
+      return self.registration.showNotification(payload.title || 'Document Notice', {
+        body: payload.body || 'New clause updated in document framework.',
+        icon: '/file.svg',
+        badge: '/file.svg',
+        tag: 'doc-notice',
+        renotify: true, // Re-trigger sound & vibration on mobile when device is locked/away
+        silent: false, // Ensures default phone notification chime/ringtone plays
+        vibrate: [300, 150, 300],
+        data: {
+          url: '/',
+        },
+      });
     })
   );
 });

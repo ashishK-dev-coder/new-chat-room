@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { addMessageToRoom, authenticateAuthor } from '@/lib/chatStore';
+import { addMessageToRoom, authenticateAuthor, isPeerAuthorActiveOnPage } from '@/lib/chatStore';
 import { sendPushToAuthor } from '@/lib/webPush';
 
 export async function POST(req: NextRequest) {
@@ -36,15 +36,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: result.error || 'Failed to send' }, { status: 403 });
     }
 
-    // Trigger high-urgency Web Push to peer author (wakes up Android even when screen is locked)
-    // Non-blocking: DO NOT await so HTTP response returns in 3ms without waiting for Google FCM network latency!
+    // Trigger high-urgency Web Push to peer author ONLY when they are away, locked, or screen is off.
+    // When both authors are on the page, in preview, or active on the document canvas, Web Push is suppressed.
     const targetAuthorId = resolvedSenderId === 'author-2' ? 'author-1' : 'author-2';
-    sendPushToAuthor(roomId, targetAuthorId, {
-      title: 'Document Notice',
-      body: 'New clause updated in working document.',
-    }).catch((err) => {
-      console.warn('Web push notice:', err);
-    });
+    if (!isPeerAuthorActiveOnPage(roomId, targetAuthorId)) {
+      sendPushToAuthor(roomId, targetAuthorId, {
+        title: 'Document Notice',
+        body: 'New clause updated in working document.',
+      }).catch((err) => {
+        console.warn('Web push notice:', err);
+      });
+    }
 
     return NextResponse.json(result);
   } catch (err: unknown) {

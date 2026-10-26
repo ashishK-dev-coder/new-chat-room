@@ -205,10 +205,25 @@ export default function WordChatApp() {
 
   // Inactivity tracking reference (5 minutes)
   const lastActivityTime = useRef<number>(0);
+
+  // Synchronous lifecycle refs for instant 0ms access without useEffect lag
   const isUnlockedRef = useRef<boolean>(isUnlocked);
-  useEffect(() => {
-    isUnlockedRef.current = isUnlocked;
-  }, [isUnlocked]);
+  isUnlockedRef.current = isUnlocked;
+
+  const bothUnlockedRef = useRef<boolean>(bothUnlocked);
+  bothUnlockedRef.current = bothUnlocked;
+
+  const isPreviewActiveRef = useRef<boolean>(isPreviewActive);
+  isPreviewActiveRef.current = isPreviewActive;
+
+  const showPreviewConfirmRef = useRef<boolean>(showPreviewConfirm);
+  showPreviewConfirmRef.current = showPreviewConfirm;
+
+  const incomingPreviewInviteRef = useRef<{ from: string } | null>(incomingPreviewInvite);
+  incomingPreviewInviteRef.current = incomingPreviewInvite;
+
+  const participantCountRef = useRef<number>(participantCount);
+  participantCountRef.current = participantCount;
 
   // Audio Context Ref & HTML5 Audio Element Ref
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -447,12 +462,23 @@ export default function WordChatApp() {
 
   // Trigger non-spam stealth system notification with phone's default chime/vibration
   // ONLY triggered when user is locked in Protected View (!isUnlockedRef.current) or tab is backgrounded
+  // AND strictly suppressed when both authors are online on page, in video preview, or actively viewing
   const showWordNotification = useCallback(async () => {
     if (typeof window === 'undefined') return;
 
-    // IF user is actively chatting (unlocked and viewing foreground tab), do not fire system notification
-    const isActivelyChatting = isUnlockedRef.current && typeof document !== 'undefined' && !document.hidden;
-    if (isActivelyChatting) {
+    // Suppress notification if both authors are on page, in preview, or user is actively viewing
+    const isBothOnPage = bothUnlockedRef.current;
+    const isInPreview =
+      isPreviewActiveRef.current ||
+      showPreviewConfirmRef.current ||
+      incomingPreviewInviteRef.current !== null;
+    const isActivelyViewing =
+      isUnlockedRef.current &&
+      typeof document !== 'undefined' &&
+      !document.hidden &&
+      document.visibilityState === 'visible';
+
+    if (isBothOnPage || isInPreview || isActivelyViewing) {
       return;
     }
 
@@ -501,6 +527,7 @@ export default function WordChatApp() {
 
   // Multi-engine notification sound with single-chime guarantee (no double-beep/echo)
   // Fires when user is locked in Protected View (!isUnlocked) or away/minimized (document.hidden)
+  // STRICTLY SILENT when both authors are on page, in preview, or actively viewing
   const playNotificationSound = useCallback(() => {
     // Cooldown throttle: Prevent duplicate audio firing within 2.5 seconds
     const now = Date.now();
@@ -509,13 +536,19 @@ export default function WordChatApp() {
     }
     lastSoundPlayedAtRef.current = now;
 
-    // If user is actively typing in the unlocked foreground tab, do not fire loud alerts
-    const isActivelyChatting =
+    // Suppress sound if both authors are on page, in preview, or user is actively viewing
+    const isBothOnPage = bothUnlockedRef.current;
+    const isInPreview =
+      isPreviewActiveRef.current ||
+      showPreviewConfirmRef.current ||
+      incomingPreviewInviteRef.current !== null;
+    const isActivelyViewing =
       isUnlockedRef.current &&
       typeof document !== 'undefined' &&
-      !document.hidden;
+      !document.hidden &&
+      document.visibilityState === 'visible';
 
-    if (isActivelyChatting) {
+    if (isBothOnPage || isInPreview || isActivelyViewing) {
       return;
     }
 
@@ -870,9 +903,7 @@ export default function WordChatApp() {
   }, [handleLocalPanicWipe]);
 
 
-  // Video preview signaling listener registry (prevents component re-renders from restarting camera)
-  const isPreviewActiveRef = useRef<boolean>(false);
-  isPreviewActiveRef.current = isPreviewActive;
+
 
   const signalListenersRef = useRef<Set<(sig: WebRTCSignal) => void>>(new Set());
   const registerSignalListener = useCallback((listener: (sig: WebRTCSignal) => void) => {
@@ -1025,24 +1056,33 @@ export default function WordChatApp() {
                 notifiedMsgIdsRef.current.add(incomingMsg.id);
                 setParticipantCount(2);
 
-                const isUserAwayOrLocked =
-                  !isUnlockedRef.current ||
-                  (typeof document !== 'undefined' && document.hidden);
-
-                // Only alert if locked or away
-                if (isUserAwayOrLocked) {
-                  if (!isUnlockedRef.current) {
-                    setIsFontColorBlinking(true);
-                  }
-                  playNotificationSoundRef.current();
-                }
-
-                // ONLY mark as seen if the user is unlocked AND actively viewing the document (not screen-locked or in background)
+                const isBothOnPage = bothUnlockedRef.current;
+                const isInPreview =
+                  isPreviewActiveRef.current ||
+                  showPreviewConfirmRef.current ||
+                  incomingPreviewInviteRef.current !== null;
                 const isActivelyViewing =
                   isUnlockedRef.current &&
                   typeof document !== 'undefined' &&
                   !document.hidden &&
                   document.visibilityState === 'visible';
+
+                // Suppress sound & notifications when both are on page, in preview, or actively viewing
+                if (!isBothOnPage && !isInPreview && !isActivelyViewing) {
+                  const isUserAwayOrLocked =
+                    !isUnlockedRef.current ||
+                    (typeof document !== 'undefined' && document.hidden);
+
+                  // Only alert if locked or away
+                  if (isUserAwayOrLocked) {
+                    if (!isUnlockedRef.current) {
+                      setIsFontColorBlinking(true);
+                    }
+                    playNotificationSoundRef.current();
+                  }
+                }
+
+                // ONLY mark as seen if the user is unlocked AND actively viewing the document (not screen-locked or in background)
 
                 if (isActivelyViewing) {
                   // If unlocked and active: mark as seen immediately (with deduplication)
@@ -1175,16 +1215,30 @@ export default function WordChatApp() {
             if (unnotifiedPeerMessages.length > 0) {
               unnotifiedPeerMessages.forEach((m: ChatMessage) => notifiedMsgIdsRef.current.add(m.id));
 
-              const isUserAwayOrLocked =
-                !isUnlockedRef.current ||
-                (typeof document !== 'undefined' && document.hidden);
+              const isBothOnPage = bothUnlockedRef.current;
+              const isInPreview =
+                isPreviewActiveRef.current ||
+                showPreviewConfirmRef.current ||
+                incomingPreviewInviteRef.current !== null;
+              const isActivelyViewing =
+                isUnlockedRef.current &&
+                typeof document !== 'undefined' &&
+                !document.hidden &&
+                document.visibilityState === 'visible';
 
-              // Only alert if locked or away
-              if (isUserAwayOrLocked) {
-                if (!isUnlockedRef.current) {
-                  setIsFontColorBlinking(true);
+              // Suppress sound & notifications when both are on page, in preview, or actively viewing
+              if (!isBothOnPage && !isInPreview && !isActivelyViewing) {
+                const isUserAwayOrLocked =
+                  !isUnlockedRef.current ||
+                  (typeof document !== 'undefined' && document.hidden);
+
+                // Only alert if locked or away
+                if (isUserAwayOrLocked) {
+                  if (!isUnlockedRef.current) {
+                    setIsFontColorBlinking(true);
+                  }
+                  playNotificationSoundRef.current();
                 }
-                playNotificationSoundRef.current();
               }
             }
 

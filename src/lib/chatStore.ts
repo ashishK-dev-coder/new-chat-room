@@ -155,6 +155,24 @@ export function isBothAuthorsUnlocked(room: RoomState): boolean {
   );
 }
 
+// Check if a specific author is currently online and unlocked in the room
+export function isAuthorOnlineAndUnlocked(roomId: string, authorId: string): boolean {
+  const room = rooms.get(roomId);
+  if (!room) return false;
+  const isUnlocked = room.unlockedAuthors?.has(authorId) ?? false;
+  if (!isUnlocked) return false;
+  const activeIds = getActiveAuthorIds(room);
+  return activeIds.has(authorId);
+}
+
+// Check if peer author is actively on the page or both authors are online
+export function isPeerAuthorActiveOnPage(roomId: string, targetAuthorId: string): boolean {
+  const room = rooms.get(roomId);
+  if (!room) return false;
+  if (isBothAuthorsUnlocked(room)) return true;
+  return isAuthorOnlineAndUnlocked(roomId, targetAuthorId);
+}
+
 export function getUnlockedAuthorCount(room: RoomState): number {
   return room.unlockedAuthors ? room.unlockedAuthors.size : 0;
 }
