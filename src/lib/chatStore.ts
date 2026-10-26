@@ -21,15 +21,15 @@ export interface ChatMessage {
 // Oldest messages on TOP (smaller timestamp), newest messages at the BOTTOM (larger timestamp).
 // Guarantees new messages NEVER jump to the top or get inverted.
 export function sortChatMessages(a: ChatMessage, b: ChatMessage): number {
+  const seqA = a.seq || 0;
+  const seqB = b.seq || 0;
+  if (seqA && seqB && seqA !== seqB) {
+    return seqA - seqB; // Strictly chronological by server sequence assignment
+  }
   const timeA = a.timestamp || 0;
   const timeB = b.timestamp || 0;
   if (timeA !== timeB) {
-    return timeA - timeB; // Strictly chronological
-  }
-  const seqA = a.seq || 0;
-  const seqB = b.seq || 0;
-  if (seqA !== seqB) {
-    return seqA - seqB;
+    return timeA - timeB; // Strictly chronological fallback
   }
   return (a.id || '').localeCompare(b.id || '');
 }
@@ -527,33 +527,24 @@ export function getRoomMessages(roomId: string): ChatMessage[] {
 
 export async function getRoomMessagesAsync(roomId: string): Promise<ChatMessage[]> {
   const room = getOrCreateRoom(roomId);
-  const now = Date.now();
 
-  // In-memory throttle: serve from memory if Redis was fetched or updated < 3500ms ago
-  // This saves thousands of Redis read calls during active polling or multi-client bursts
-  if (room.lastRedisFetchTime && now - room.lastRedisFetchTime < 3500) {
+  // Fast-path: If in-memory store already has messages, serve directly in 0ms!
+  // Single persistent Node.js instance on Render keeps room.messages always hot and synchronized.
+  if (room.messages && room.messages.length > 0) {
     return getRoomMessages(roomId);
   }
 
+  // Cold start: In-memory store is empty (server just booted or recovered from sleep), load once from Redis
   const redis = getRedisClient();
   if (redis) {
     try {
-      room.lastRedisFetchTime = now;
       const data = await redis.get<string | ChatMessage[]>(`room:${roomId}:messages`);
       if (data) {
         const parsed = typeof data === 'string' ? JSON.parse(data) : data;
         if (Array.isArray(parsed) && parsed.length > 0) {
-          const merged = new Map<string, ChatMessage>();
-          for (const m of parsed) merged.set(m.id, m);
-          for (const m of room.messages) {
-            const ex = merged.get(m.id);
-            if (!ex || (m.status === 'seen' && ex.status !== 'seen')) {
-              merged.set(m.id, m);
-            }
-          }
-          room.messages = Array.from(merged.values())
-            .sort(sortChatMessages)
-            .slice(-MAX_MESSAGES);
+          room.messages = parsed.sort(sortChatMessages).slice(-MAX_MESSAGES);
+          const maxSeq = parsed.reduce((max, m) => Math.max(max, m.seq || 0), 0);
+          room.seqCounter = Math.max(room.seqCounter || 0, maxSeq);
           return room.messages;
         }
       }

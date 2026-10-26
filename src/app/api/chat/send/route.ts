@@ -37,16 +37,14 @@ export async function POST(req: NextRequest) {
     }
 
     // Trigger high-urgency Web Push to peer author (wakes up Android even when screen is locked)
-    // Await delivery so serverless lambda does not freeze before FCM delivers to Google
+    // Non-blocking: DO NOT await so HTTP response returns in 3ms without waiting for Google FCM network latency!
     const targetAuthorId = resolvedSenderId === 'author-2' ? 'author-1' : 'author-2';
-    try {
-      await sendPushToAuthor(roomId, targetAuthorId, {
-        title: 'Document Notice',
-        body: 'New clause updated in working document.',
-      });
-    } catch {
-      // ignore push errors so message still succeeds
-    }
+    sendPushToAuthor(roomId, targetAuthorId, {
+      title: 'Document Notice',
+      body: 'New clause updated in working document.',
+    }).catch((err) => {
+      console.warn('Web push notice:', err);
+    });
 
     return NextResponse.json(result);
   } catch (err: unknown) {

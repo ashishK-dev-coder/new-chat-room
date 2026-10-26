@@ -551,6 +551,9 @@ export default function WordChatApp() {
     }
   }, [playWebAudioChime, showWordNotification]);
 
+  const playNotificationSoundRef = useRef(playNotificationSound);
+  playNotificationSoundRef.current = playNotificationSound;
+
   // Switch Author role (Author 1 <-> Author 2) for immediate multi-window pair testing
   const switchAuthorRole = useCallback(
     (newRole: 'author-1' | 'author-2') => {
@@ -974,25 +977,35 @@ export default function WordChatApp() {
             if (data.bothUnlocked !== undefined) {
               setBothUnlocked(Boolean(data.bothUnlocked));
             }
-          } else if (data.type === 'message' && data.message) {
+          } else if (data.type === 'message' && (data.message || Array.isArray(data.messages))) {
             lastActivityTime.current = Date.now();
-            const incomingMsg: ChatMessage = {
-              ...data.message,
-              status: data.message.status || 'delivered',
-            };
+            const incomingMsg: ChatMessage | null = data.message
+              ? {
+                  ...data.message,
+                  status: data.message.status || 'delivered',
+                }
+              : null;
+
+            const incomingList: ChatMessage[] =
+              Array.isArray(data.messages) && data.messages.length > 0
+                ? data.messages
+                : incomingMsg
+                ? [incomingMsg]
+                : [];
 
             // Deduplicate and insert deterministically
             setMessages((prev) => {
               const withoutOpt = prev.filter(
                 (m) =>
                   !(
-                    m.id === incomingMsg.id ||
-                    (m.senderId === incomingMsg.senderId &&
+                    incomingList.some((inc) => inc.id === m.id) ||
+                    (incomingMsg &&
+                      m.senderId === incomingMsg.senderId &&
                       m.text === incomingMsg.text &&
                       (m.status === 'pending' || m.id.startsWith('msg-opt-')))
                   )
               );
-              const { next } = mergeAndSortMessages(withoutOpt, [incomingMsg]);
+              const { next } = mergeAndSortMessages(withoutOpt, incomingList);
               return next;
             });
 
@@ -1004,9 +1017,9 @@ export default function WordChatApp() {
             const currentTabId = tabAuthorIdRef.current || tabAuthorId;
             const isFromSelf =
               incomingSenderId === currentTabId ||
-              (incomingMsg.id && sentMsgIdsRef.current.has(incomingMsg.id));
+              (incomingMsg?.id && sentMsgIdsRef.current.has(incomingMsg.id));
 
-            if (!isFromSelf && incomingMsg.id) {
+            if (!isFromSelf && incomingMsg?.id) {
               const isAlreadyNotified = notifiedMsgIdsRef.current.has(incomingMsg.id);
               if (!isAlreadyNotified) {
                 notifiedMsgIdsRef.current.add(incomingMsg.id);
@@ -1021,7 +1034,7 @@ export default function WordChatApp() {
                   if (!isUnlockedRef.current) {
                     setIsFontColorBlinking(true);
                   }
-                  playNotificationSound();
+                  playNotificationSoundRef.current();
                 }
 
                 // ONLY mark as seen if the user is unlocked AND actively viewing the document (not screen-locked or in background)
@@ -1093,7 +1106,7 @@ export default function WordChatApp() {
         eventSource.close();
       }
     };
-  }, [roomId, tabAuthorId, playNotificationSound]);
+  }, [roomId, tabAuthorId]);
 
   // Instantly notify server when author leaves or closes the tab/page ("cuts the page")
   useEffect(() => {
@@ -1171,7 +1184,7 @@ export default function WordChatApp() {
                 if (!isUnlockedRef.current) {
                   setIsFontColorBlinking(true);
                 }
-                playNotificationSound();
+                playNotificationSoundRef.current();
               }
             }
 
@@ -1236,33 +1249,30 @@ export default function WordChatApp() {
         // ignore offline sync
       } finally {
         if (isMounted) {
-          // Render Free Tier Optimized Heartbeat:
-          // When SSE is connected, all messages, presence, and WebRTC signals arrive in 0ms over SSE.
-          // Polling acts purely as a low-CPU idle heartbeat.
           const isCallActiveOrConnecting =
             isPreviewActive || showPreviewConfirm || incomingPreviewInvite !== null;
 
-          let nextDelay = 25000; // Default idle heartbeat: 25s
+          let nextDelay = 3500;
           if (isSseConnectedRef.current) {
             if (isCallActiveOrConnecting) {
-              nextDelay = 3000; // Fast fallback during active video scanner: 3s
+              nextDelay = 2000;
             } else if (document.hidden) {
-              nextDelay = 30000; // Background tab: 30s
+              nextDelay = 15000;
             } else if (!isUnlockedRef.current) {
-              nextDelay = 25000; // Protected view: 25s
+              nextDelay = 8000;
             } else {
-              nextDelay = 25000; // Active document with healthy SSE: 25s
+              nextDelay = 3500; // Active document with SSE: 3.5s safety heartbeat
             }
           } else {
-            // Offline / Disconnected SSE fallback mode
+            // Offline / Disconnected SSE fallback mode: rapid sync so chat never lags
             if (isCallActiveOrConnecting) {
               nextDelay = 1200;
             } else if (document.hidden) {
-              nextDelay = 20000;
+              nextDelay = 8000;
             } else if (!isUnlockedRef.current) {
-              nextDelay = 10000;
+              nextDelay = 5000;
             } else {
-              nextDelay = 3500;
+              nextDelay = 1800; // 1.8s when chatting without SSE
             }
           }
           syncTimeout = setTimeout(runSync, nextDelay);
