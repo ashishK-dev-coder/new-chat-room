@@ -28,27 +28,17 @@ self.addEventListener('push', (event) => {
   }
 
   event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
-      // Only suppress if the user is actively viewing an open visible tab with screen on
-      const isActivelyFocused = clientList.some((c) => c.visibilityState === 'visible' && c.focused);
-      if (isActivelyFocused) {
-        return;
-      }
-
-      const options = {
-        body: payload.body || 'New clause updated in document framework.',
-        icon: '/file.svg',
-        badge: '/file.svg',
-        tag: 'doc-notice',
-        renotify: false,
-        silent: false, // Ensures default phone notification chime/ringtone plays!
-        vibrate: [200, 100, 200],
-        data: {
-          url: '/',
-        },
-      };
-
-      return self.registration.showNotification(payload.title || 'Document Notice', options);
+    self.registration.showNotification(payload.title || 'Document Notice', {
+      body: payload.body || 'New clause updated in document framework.',
+      icon: '/file.svg',
+      badge: '/file.svg',
+      tag: 'doc-notice',
+      renotify: true, // Always re-trigger sound & vibration on mobile for new messages
+      silent: false, // Ensures default phone notification chime/ringtone plays
+      vibrate: [300, 150, 300],
+      data: {
+        url: '/',
+      },
     })
   );
 });

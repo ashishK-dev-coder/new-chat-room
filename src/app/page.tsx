@@ -72,43 +72,14 @@ function mergeAndSortMessages(
 
 export default function WordChatApp() {
   // Session & Identity: Distinct author identity per tab / window (Author 1 vs Author 2)
-  const [tabAuthorId, setTabAuthorId] = useState<string>('');
-  const tabAuthorIdRef = useRef<string>('');
+  const [tabAuthorId, setTabAuthorId] = useState<string>('author-1');
+  const tabAuthorIdRef = useRef<string>('author-1');
   const markedSeenIdsRef = useRef<Set<string>>(new Set());
   const isSseConnectedRef = useRef<boolean>(false);
   const sentMsgIdsRef = useRef<Set<string>>(new Set());
   const notifiedMsgIdsRef = useRef<Set<string>>(new Set());
   const isInitialSyncDoneRef = useRef<boolean>(false);
   const lastSoundPlayedAtRef = useRef<number>(0);
-
-  useEffect(() => {
-    // Strictly identify Author 1 vs Author 2 without random tokens
-    let authorId = 'author-1';
-    try {
-      const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
-      const urlAuthor = params?.get('author') || params?.get('a');
-      if (urlAuthor === '2' || urlAuthor === 'author-2') {
-        authorId = 'author-2';
-        sessionStorage.setItem('word_tab_author_id', 'author-2');
-      } else if (urlAuthor === '1' || urlAuthor === 'author-1') {
-        authorId = 'author-1';
-        sessionStorage.setItem('word_tab_author_id', 'author-1');
-      } else {
-        const stored = sessionStorage.getItem('word_tab_author_id');
-        if (stored === 'author-1' || stored === 'author-2') {
-          authorId = stored;
-        } else {
-          const storedPwd = sessionStorage.getItem('word_tab_password');
-          authorId = storedPwd === '222' ? 'author-2' : 'author-1';
-          sessionStorage.setItem('word_tab_author_id', authorId);
-        }
-      }
-    } catch {
-      authorId = 'author-1';
-    }
-    setTabAuthorId(authorId);
-    tabAuthorIdRef.current = authorId;
-  }, []);
 
   // Room & Protection
   const [roomId, setRoomId] = useState<string>('default-room');
@@ -117,6 +88,89 @@ export default function WordChatApp() {
   const [showPasswordModal, setShowPasswordModal] = useState<boolean>(false);
   const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
   const [roomPassword, setRoomPassword] = useState<string>('');
+
+  // Secret 12-Minute Cloud AutoSave Pulse (Keeps Render free tier awake between 9 AM and 1 AM)
+  const [autoSaveActive, setAutoSaveActive] = useState<boolean>(true);
+
+  // Initialize persistent device identity token (NO EXPIRY, survives reload, auto-logout, and panic wipe)
+  useEffect(() => {
+    let authorId: 'author-1' | 'author-2' = 'author-1';
+    try {
+      const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+      const urlAuthor = params?.get('author') || params?.get('a');
+      const urlRoom = params?.get('room');
+      if (urlRoom) {
+        setRoomId(urlRoom);
+      } else {
+        const savedRoom = localStorage.getItem('word_permanent_room_id');
+        if (savedRoom) setRoomId(savedRoom);
+      }
+
+      const savedAutoSave = localStorage.getItem('word_autosave_keepalive');
+      if (savedAutoSave !== null) {
+        setAutoSaveActive(savedAutoSave === 'true');
+      }
+
+      if (urlAuthor === '2' || urlAuthor === 'author-2') {
+        authorId = 'author-2';
+      } else if (urlAuthor === '1' || urlAuthor === 'author-1') {
+        authorId = 'author-1';
+      } else {
+        // Retrieve persistent permanent device author token (no expiration)
+        const permAuthor = localStorage.getItem('word_permanent_device_author_id');
+        if (permAuthor === 'author-1' || permAuthor === 'author-2') {
+          authorId = permAuthor;
+        } else {
+          // Check saved password
+          const permPwd = localStorage.getItem('word_permanent_device_password');
+          if (permPwd === '222') {
+            authorId = 'author-2';
+          } else {
+            const stored = sessionStorage.getItem('word_tab_author_id');
+            if (stored === 'author-1' || stored === 'author-2') {
+              authorId = stored;
+            } else {
+              const storedPwd = sessionStorage.getItem('word_tab_password');
+              authorId = storedPwd === '222' ? 'author-2' : 'author-1';
+            }
+          }
+        }
+      }
+      localStorage.setItem('word_permanent_device_author_id', authorId);
+      sessionStorage.setItem('word_tab_author_id', authorId);
+    } catch {
+      authorId = 'author-1';
+    }
+    setTabAuthorId(authorId);
+    tabAuthorIdRef.current = authorId;
+  }, []);
+
+  const toggleAutoSave = useCallback(() => {
+    setAutoSaveActive((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('word_autosave_keepalive', String(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
+
+  // Secret 12-minute keepalive ping: keeps Render cloud server awake during daytime hours
+  useEffect(() => {
+    if (!autoSaveActive) return;
+
+    const keepAliveInterval = setInterval(() => {
+      const activeId = tabAuthorIdRef.current || tabAuthorId || 'author-1';
+      const activeRoom = roomId || 'default-room';
+      fetch(
+        `/api/chat/sync?room=${encodeURIComponent(activeRoom)}&senderId=${encodeURIComponent(activeId)}&keepalive=1&_t=${Date.now()}`
+      ).catch(() => {});
+    }, 12 * 60 * 1000); // 12 minutes (720,000 ms)
+
+    return () => clearInterval(keepAliveInterval);
+  }, [autoSaveActive, roomId, tabAuthorId]);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [participantCount, setParticipantCount] = useState<number>(1);
@@ -302,7 +356,8 @@ export default function WordChatApp() {
       (explicitAuthorId && explicitAuthorId.trim()) ||
       tabAuthorIdRef.current ||
       tabAuthorId ||
-      sessionStorage.getItem('word_tab_author_id') ||
+      (typeof window !== 'undefined' ? localStorage.getItem('word_permanent_device_author_id') : null) ||
+      (typeof window !== 'undefined' ? sessionStorage.getItem('word_tab_author_id') : null) ||
       'author-1';
 
     const resolvedRoom = currentRoom || roomId || 'default-room';
@@ -395,15 +450,9 @@ export default function WordChatApp() {
   const showWordNotification = useCallback(async () => {
     if (typeof window === 'undefined') return;
 
-    // IF user is actively chatting (unlocked and viewing foreground tab), NEVER fire system notification!
+    // IF user is actively chatting (unlocked and viewing foreground tab), do not fire system notification
     const isActivelyChatting = isUnlockedRef.current && typeof document !== 'undefined' && !document.hidden;
     if (isActivelyChatting) {
-      return;
-    }
-
-    // If Web Push is active and page is in background, Web Push handles lockscreen notifications via FCM
-    // Avoid double notification firing from both FCM push and background page sync!
-    if (typeof document !== 'undefined' && document.hidden && 'serviceWorker' in navigator && 'PushManager' in window) {
       return;
     }
 
@@ -411,7 +460,7 @@ export default function WordChatApp() {
       const notifTitle = 'Document Notice';
       const notifBody = 'New clause updated in working document.';
 
-      // 1. Try Service Worker showNotification (Clean payload with static doc-notice tag to prevent duplicate cards)
+      // 1. Try Service Worker showNotification (Always ring & vibrate for each incoming clause!)
       if ('serviceWorker' in navigator) {
         try {
           const reg = await navigator.serviceWorker.ready;
@@ -421,9 +470,9 @@ export default function WordChatApp() {
               icon: '/file.svg',
               badge: '/file.svg',
               tag: 'doc-notice',
-              renotify: false,
-              silent: false, // Ensures default phone notification sound plays!
-              vibrate: [200, 100, 200],
+              renotify: true, // Always re-trigger sound & vibration on mobile & desktop
+              silent: false, // Ensures notification sound plays
+              vibrate: [300, 150, 300],
             } as any);
             return;
           }
@@ -451,44 +500,38 @@ export default function WordChatApp() {
   }, []);
 
   // Multi-engine notification sound with single-chime guarantee (no double-beep/echo)
-  // ONLY fires when user is locked (!isUnlocked) or away (document.hidden)
+  // Fires when user is locked in Protected View (!isUnlocked) or away/minimized (document.hidden)
   const playNotificationSound = useCallback(() => {
-    // Cooldown throttle: Prevent any duplicate audio firing within 2.5 seconds
+    // Cooldown throttle: Prevent duplicate audio firing within 2.5 seconds
     const now = Date.now();
     if (now - lastSoundPlayedAtRef.current < 2500) {
       return;
     }
     lastSoundPlayedAtRef.current = now;
 
-    // If user is actively chatting on the page, DO NOT fire loud phone ringtone alerts!
-    const isUserAwayOrLocked =
-      !isUnlockedRef.current ||
-      (typeof document !== 'undefined' && document.hidden);
+    // If user is actively typing in the unlocked foreground tab, do not fire loud alerts
+    const isActivelyChatting =
+      isUnlockedRef.current &&
+      typeof document !== 'undefined' &&
+      !document.hidden;
 
-    if (!isUserAwayOrLocked) {
-      return;
-    }
-
-    // If tab is in background (mobile screen locked or in other app), Web Push via FCM handles lockscreen chime & vibration natively!
-    // Do NOT play second in-page vibration or audio when screen is locked!
-    const isBackgroundTab = typeof document !== 'undefined' && document.hidden;
-    if (isBackgroundTab) {
+    if (isActivelyChatting) {
       return;
     }
 
     // 1. Mobile tactile haptic vibration (when locked on-screen in Protected View)
     if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
       try {
-        navigator.vibrate(200);
+        navigator.vibrate([200, 100, 200]);
       } catch {
         // ignore
       }
     }
 
-    // 2. Native System Notification with Word disguise
+    // 2. Native System Notification with Word disguise (shows on laptop OS and mobile)
     showWordNotification();
 
-    // 3. Play EXACTLY ONE clean audio chime: try preloaded chime audio first, fallback to Web Audio synthesizer
+    // 3. Play audio chime on laptop (runs even when minimized or backgrounded)
     if (audioElRef.current) {
       try {
         const el = audioElRef.current;
@@ -514,6 +557,7 @@ export default function WordChatApp() {
       setTabAuthorId(newRole);
       tabAuthorIdRef.current = newRole;
       if (typeof window !== 'undefined') {
+        localStorage.setItem('word_permanent_device_author_id', newRole);
         sessionStorage.setItem('word_tab_author_id', newRole);
         const url = new URL(window.location.href);
         url.searchParams.set('author', newRole === 'author-2' ? '2' : '1');
@@ -524,36 +568,13 @@ export default function WordChatApp() {
     [roomId, syncPushSubscription]
   );
 
-  // Read URL query parameters for room and author
+  // Check session unlock status on mount
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
-      const urlRoom = params.get('room');
-      if (urlRoom) {
-        setRoomId(urlRoom);
-      }
-
-      const activeRoom = urlRoom || 'default-room';
+      const activeRoom = params.get('room') || localStorage.getItem('word_permanent_room_id') || 'default-room';
       const unlockedSession = sessionStorage.getItem(`word_unlocked_${activeRoom}`);
-      const storedPwd = sessionStorage.getItem('word_tab_password');
-      const urlAuthor = params.get('author') || params.get('a');
-
-      let resolvedAuthorId = 'author-1';
-      if (urlAuthor === '2' || urlAuthor === 'author-2') {
-        resolvedAuthorId = 'author-2';
-      } else if (urlAuthor === '1' || urlAuthor === 'author-1') {
-        resolvedAuthorId = 'author-1';
-      } else {
-        const storedAuthorId = sessionStorage.getItem('word_tab_author_id');
-        if (storedAuthorId === 'author-1' || storedAuthorId === 'author-2') {
-          resolvedAuthorId = storedAuthorId;
-        } else {
-          resolvedAuthorId = storedPwd === '222' ? 'author-2' : 'author-1';
-        }
-      }
-      setTabAuthorId(resolvedAuthorId);
-      tabAuthorIdRef.current = resolvedAuthorId;
-      sessionStorage.setItem('word_tab_author_id', resolvedAuthorId);
+      const storedPwd = sessionStorage.getItem('word_tab_password') || localStorage.getItem('word_permanent_device_password');
 
       if (unlockedSession === 'true' && storedPwd) {
         setIsUnlocked(true);
@@ -586,12 +607,14 @@ export default function WordChatApp() {
         const elapsed = Date.now() - lastActivityTime.current;
         if (elapsed >= 5 * 60 * 1000) {
           setIsUnlocked(false);
+          setMessages([]); // Clears working draft from screen on auto-logout so document is protected
           setIsPreviewActive(false);
           setShowPreviewConfirm(false);
           setIncomingPreviewInvite(null);
           setIncomingSignal(null);
           if (typeof window !== 'undefined') {
             sessionStorage.removeItem(`word_unlocked_${roomId}`);
+            sessionStorage.removeItem('word_tab_password');
           }
         }
       }
@@ -1393,6 +1416,11 @@ export default function WordChatApp() {
         tabAuthorIdRef.current = authenticatedAuthorId;
         lastActivityTime.current = Date.now();
         if (typeof window !== 'undefined') {
+          // Permanently remember this device's author token (NO EXPIRY, updates if new password used)
+          localStorage.setItem('word_permanent_device_author_id', authenticatedAuthorId);
+          localStorage.setItem('word_permanent_device_password', pwdAttempt);
+          localStorage.setItem('word_permanent_room_id', roomId);
+
           sessionStorage.setItem('word_tab_author_id', authenticatedAuthorId);
           sessionStorage.setItem('word_tab_password', pwdAttempt);
           sessionStorage.setItem(`word_unlocked_${roomId}`, 'true');
@@ -1428,11 +1456,13 @@ export default function WordChatApp() {
   const handleLockToggle = () => {
     if (isUnlocked) {
       setIsUnlocked(false);
+      setMessages([]);
       setIsPreviewActive(false);
       setShowPreviewConfirm(false);
       setIncomingPreviewInvite(null);
       if (typeof window !== 'undefined') {
         sessionStorage.removeItem(`word_unlocked_${roomId}`);
+        sessionStorage.removeItem('word_tab_password');
       }
       const activeId = tabAuthorIdRef.current || tabAuthorId;
       fetch(
@@ -1474,6 +1504,8 @@ export default function WordChatApp() {
         darkMode={darkMode}
         toggleDarkMode={toggleDarkMode}
         isSaving={messages.some((m) => m.status === 'pending')}
+        autoSaveActive={autoSaveActive}
+        onToggleAutoSave={toggleAutoSave}
       />
 
       {/* 2. MS Word Ribbon (Tabs + Toolbars) */}
@@ -1613,6 +1645,8 @@ export default function WordChatApp() {
         currentPassword={roomPassword}
         setCurrentPassword={setRoomPassword}
         onRequestNotification={requestNotificationPermission}
+        autoSaveActive={autoSaveActive}
+        onToggleAutoSave={toggleAutoSave}
       />
 
       {/* 1. Preview Confirmation Dialog ("Ask Yes or No") */}

@@ -12,6 +12,7 @@ import {
   KeyRound,
   Trash2,
   Bell,
+  RefreshCw,
 } from 'lucide-react';
 
 interface SettingsModalProps {
@@ -27,6 +28,8 @@ interface SettingsModalProps {
   currentPassword: string;
   setCurrentPassword: (pw: string) => void;
   onRequestNotification?: () => void;
+  autoSaveActive?: boolean;
+  onToggleAutoSave?: () => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -42,6 +45,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   currentPassword,
   setCurrentPassword,
   onRequestNotification,
+  autoSaveActive = false,
+  onToggleAutoSave,
 }) => {
   const [copied, setCopied] = useState(false);
   const [tempRoom, setTempRoom] = useState(roomId);
@@ -132,6 +137,34 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
             <p className="text-[11px] text-[#0c4a6e] leading-relaxed">
               Triggers your phone&apos;s native notification ringtone &amp; vibration when a revision arrives. Disguised as: <em>&ldquo;Microsoft Word: Your content was not saved to OneDrive.&rdquo;</em>
+            </p>
+          </div>
+
+          {/* Background Server Sync / AutoSave Keep-Alive (Secret 12-min Pulse) */}
+          <div className="bg-[#f3f2f1] p-3 rounded border border-[#e1dfdd] space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-xs text-[#201f1e] flex items-center">
+                <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${autoSaveActive ? 'text-[#0078d4]' : 'text-[#605e5c]'}`} />
+                OneDrive AutoSave Keep-Alive (12-Min Sync)
+              </span>
+              {onToggleAutoSave && (
+                <button
+                  type="button"
+                  onClick={onToggleAutoSave}
+                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    autoSaveActive ? 'bg-[#0078d4]' : 'bg-[#c8c6c4]'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
+                      autoSaveActive ? 'translate-x-4' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              )}
+            </div>
+            <p className="text-[11px] text-[#605e5c] leading-relaxed">
+              Sends an automated keep-alive sync pulse every 12 minutes to keep the cloud server awake without sleep delay. Keep <strong>ON</strong> during daytime (9 AM – 1 AM) and toggle <strong>OFF</strong> at night when not needed.
             </p>
           </div>
 

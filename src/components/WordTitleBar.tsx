@@ -28,6 +28,8 @@ interface WordTitleBarProps {
   darkMode?: boolean;
   toggleDarkMode?: () => void;
   isSaving?: boolean;
+  autoSaveActive?: boolean;
+  onToggleAutoSave?: () => void;
 }
 
 export const WordTitleBar: React.FC<WordTitleBarProps> = ({
@@ -41,6 +43,8 @@ export const WordTitleBar: React.FC<WordTitleBarProps> = ({
   darkMode = false,
   toggleDarkMode,
   isSaving = false,
+  autoSaveActive = false,
+  onToggleAutoSave,
 }) => {
   return (
     <header
@@ -54,6 +58,28 @@ export const WordTitleBar: React.FC<WordTitleBarProps> = ({
         <div className="w-6 h-6 bg-white/20 rounded flex items-center justify-center font-bold text-xs tracking-tight shadow-sm hover:bg-white/30 cursor-pointer mr-1">
           W
         </div>
+
+        {/* Real Microsoft Word AutoSave Switch (Secret 12-min Keep-Alive) */}
+        {onToggleAutoSave && (
+          <button
+            onClick={onToggleAutoSave}
+            title={
+              autoSaveActive
+                ? 'AutoSave: ON (Sync active every 12 min to keep connection awake)'
+                : 'AutoSave: OFF (Click to enable 12-min cloud wake-up)'
+            }
+            className="flex items-center space-x-1 px-1.5 py-0.5 rounded text-[10px] bg-white/10 hover:bg-white/20 transition cursor-pointer select-none mr-1"
+          >
+            <span className="hidden xs:inline text-white/90 font-medium">AutoSave</span>
+            <span
+              className={`w-5 h-2.5 flex items-center rounded-full p-0.5 transition-colors ${
+                autoSaveActive ? 'bg-emerald-400 justify-end' : 'bg-white/30 justify-start'
+              }`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-white shadow-xs" />
+            </span>
+          </button>
+        )}
 
         {/* Quick Save */}
         <button
