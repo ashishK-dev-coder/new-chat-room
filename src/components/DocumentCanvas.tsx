@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { CornerUpLeft, X, Clock, Check, CheckCheck, AlertCircle, Eye } from 'lucide-react';
+import { CornerUpLeft, X, Clock, Check, CheckCheck, AlertCircle, Eye, Smile } from 'lucide-react';
 import { ChatMessage, sortChatMessages } from '@/lib/chatStore';
 import { FontSettings } from './WordRibbon';
+import { EmojiPicker } from './EmojiPicker';
 
 interface DocumentCanvasProps {
   messages: ChatMessage[];
@@ -96,6 +97,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
     text: string;
     prefix?: string;
   } | null>(null);
+  const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -127,6 +129,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
 
     setInputText('');
     setTaggedMessage(null);
+    setIsEmojiPickerOpen(false);
 
     if (onPanicWipe) {
       onPanicWipe();
@@ -339,6 +342,49 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
       }
     }
   };
+
+  // Cursor-aware Emoji insertion handler
+  const handleSelectEmoji = useCallback(
+    (emoji: string) => {
+      const textarea = inputRef.current;
+      if (textarea) {
+        const start = textarea.selectionStart ?? inputText.length;
+        const end = textarea.selectionEnd ?? inputText.length;
+        const nextText = inputText.substring(0, start) + emoji + inputText.substring(end);
+        setInputText(nextText);
+        const newPos = start + emoji.length;
+        setTimeout(() => {
+          textarea.focus();
+          textarea.setSelectionRange(newPos, newPos);
+        }, 10);
+      } else {
+        setInputText((prev) => prev + emoji);
+      }
+
+      if (isUnlocked && onTyping) {
+        if (!isTypingRef.current) {
+          isTypingRef.current = true;
+          onTyping(true);
+        }
+        if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+        typingTimerRef.current = setTimeout(() => {
+          isTypingRef.current = false;
+          onTyping(false);
+        }, 2000);
+      }
+    },
+    [inputText, isUnlocked, onTyping]
+  );
+
+  // Listen for global toggle-emoji-picker event (e.g. from Word Ribbon)
+  useEffect(() => {
+    const handleToggleEmoji = () => {
+      setIsEmojiPickerOpen((prev) => !prev);
+      setTimeout(() => inputRef.current?.focus(), 50);
+    };
+    window.addEventListener('toggle-emoji-picker', handleToggleEmoji);
+    return () => window.removeEventListener('toggle-emoji-picker', handleToggleEmoji);
+  }, []);
 
   const getFontFamilyStyle = () => {
     switch (fontSettings.family) {
@@ -636,11 +682,23 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                   })}
 
                   {/* Active Inline Typing Input (Always placed neatly below the latest clause) */}
-                  <div className={`flex flex-col mt-2 py-1.5 px-2.5 border-l-2 rounded-xs w-full min-w-0 ${
+                  <div className={`flex flex-col mt-2 py-1.5 px-2.5 border-l-2 rounded-xs w-full min-w-0 relative ${
                     darkMode
                       ? 'border-[#4ba3f4] bg-[#1e293b]/40'
                       : 'border-[#0078d4] bg-[#f0f9ff]/40'
                   }`}>
+                    {/* On-screen Emoji Picker Popover */}
+                    {isEmojiPickerOpen && (
+                      <div className="absolute bottom-full right-0 sm:left-2 mb-2 z-50">
+                        <EmojiPicker
+                          isOpen={isEmojiPickerOpen}
+                          onClose={() => setIsEmojiPickerOpen(false)}
+                          onSelectEmoji={handleSelectEmoji}
+                          darkMode={Boolean(darkMode)}
+                        />
+                      </div>
+                    )}
+
                     {/* Tagged message citation pill */}
                     {taggedMessage && (
                       <div className={`flex items-center justify-between text-[8pt] sm:text-[8.5pt] px-2 py-1 mb-1.5 rounded border-l-2 select-none w-full min-w-0 ${
@@ -708,6 +766,28 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                             }`}
                           />
                         )}
+
+                        {/* On-screen Emoji Picker Button */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setIsEmojiPickerOpen((prev) => !prev);
+                          }}
+                          className={`ml-1.5 p-1 rounded transition-colors shrink-0 cursor-pointer flex items-center justify-center ${
+                            isEmojiPickerOpen
+                              ? darkMode
+                                ? 'bg-[#38bdf8]/20 text-[#38bdf8]'
+                                : 'bg-[#185abd]/15 text-[#185abd]'
+                              : darkMode
+                              ? 'text-[#9ca3af] hover:text-[#f3f4f6] hover:bg-[#334155]'
+                              : 'text-[#64748b] hover:text-[#185abd] hover:bg-[#e2e8f0]'
+                          }`}
+                          title="Open Emoji & Symbol Box (☺)"
+                          aria-label="Open Emoji Box"
+                        >
+                          <Smile className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
+                        </button>
 
                         {/* Mobile / Quick Append Button when clause text is typed */}
                         {inputText.trim().length > 0 && (

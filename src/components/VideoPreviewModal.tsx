@@ -174,22 +174,31 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
     }
   }, [handleEndPreview]);
 
-  // Start local camera (lightweight 480x360 at 18-20 fps: uses 70% less memory/battery, zero thermal throttling)
+  // Start local camera (supports all mobile and laptop cameras with universal fallback)
   const startCamera = useCallback(async (mode: 'user' | 'environment'): Promise<MediaStream | null> => {
     try {
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 480, max: 640 },
-          height: { ideal: 360, max: 480 },
-          frameRate: { ideal: 18, max: 20 },
-          facingMode: { ideal: mode },
-        },
-        audio: false, // NO sound or microphone
-      });
+      let stream: MediaStream | null = null;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 640, max: 1280 },
+            height: { ideal: 480, max: 720 },
+            frameRate: { ideal: 24, max: 30 },
+            facingMode: { ideal: mode },
+          },
+          audio: false, // NO sound or microphone
+        });
+      } catch {
+        // Universal fallback: handles cameras that reject resolution or framerate constraints
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false,
+        });
+      }
 
       localStreamRef.current = stream;
       if (localVideoRef.current) {
@@ -207,7 +216,7 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
     }
   }, [setStatus]);
 
-  // Initialize WebRTC Peer Connection with bitrate clamping & auto-recovery
+  // Initialize WebRTC Peer Connection with auto-recovery
   const initPeerConnection = useCallback((stream: MediaStream) => {
     if (pcRef.current) {
       try {
@@ -220,20 +229,9 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
     const pc = new RTCPeerConnection(RTC_CONFIG);
     pcRef.current = pc;
 
-    // Add local video track and clamp bitrate to 350 kbps (prevents network buffer bloat & freezing)
+    // Add local video track
     stream.getVideoTracks().forEach((track) => {
-      const sender = pc.addTrack(track, stream);
-      try {
-        const params = sender.getParameters();
-        if (!params.encodings || params.encodings.length === 0) {
-          params.encodings = [{}];
-        }
-        params.encodings[0].maxBitrate = 350_000; // 350 kbps
-        params.encodings[0].maxFramerate = 20;
-        sender.setParameters(params).catch(() => {});
-      } catch {
-        // ignore
-      }
+      pc.addTrack(track, stream);
     });
 
     // Handle remote track with robust fallback
@@ -273,7 +271,7 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
       if (state === 'connected' || state === 'completed') {
         setStatus('connected');
       } else if (state === 'disconnected') {
-        // Temporary carrier network hiccup: auto-kick video element to resume playing
+        // Temporary network hiccup: auto-kick video element to resume playing
         if (remoteVideoRef.current) {
           remoteVideoRef.current.play().catch(() => {});
         }
@@ -283,21 +281,9 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
           pc.createOffer({ iceRestart: true })
             .then((offer) => pc.setLocalDescription(offer).then(() => sendSignalRef.current('offer', offer)))
             .catch(() => setStatus('ended'));
-        } else {
-          setStatus('ended');
         }
       }
     };
-
-    if ('connectionState' in pc) {
-      pc.onconnectionstatechange = () => {
-        if (pc.connectionState === 'connected') {
-          setStatus('connected');
-        } else if (pc.connectionState === 'failed') {
-          setStatus('ended');
-        }
-      };
-    }
 
     return pc;
   }, [setStatus]);
@@ -383,6 +369,24 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
     }
   }, [setStatus, stopAllMedia]);
 
+  const processSignalRef = useRef(processSignal);
+  processSignalRef.current = processSignal;
+
+  const startCameraRef = useRef(startCamera);
+  startCameraRef.current = startCamera;
+
+  const initPeerConnectionRef = useRef(initPeerConnection);
+  initPeerConnectionRef.current = initPeerConnection;
+
+  const stopAllMediaRef = useRef(stopAllMedia);
+  stopAllMediaRef.current = stopAllMedia;
+
+  const acquireWakeLockRef = useRef(acquireWakeLock);
+  acquireWakeLockRef.current = acquireWakeLock;
+
+  const registerSignalListenerRef = useRef(registerSignalListener);
+  registerSignalListenerRef.current = registerSignalListener;
+
   // Main lifecycle: starts camera once on open and tears down strictly on close
   useEffect(() => {
     if (!isOpen) return;
@@ -397,7 +401,7 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
     let acceptInterval: NodeJS.Timeout | null = null;
 
     // Keep screen awake while preview is open
-    acquireWakeLock();
+    acquireWakeLockRef.current();
 
     // Anti-freeze watchdog: Checks every 2.5s if remote video paused or got stuck on a frame
     let lastVideoTime = -1;
@@ -435,17 +439,17 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
     }, 2500);
 
     // Direct listener registration (no React tree re-renders or camera restarts)
-    const unregisterListener = registerSignalListener((sig) => {
+    const unregisterListener = registerSignalListenerRef.current((sig) => {
       if (isMounted) {
-        processSignal(sig);
+        processSignalRef.current(sig);
       }
     });
 
     const setup = async () => {
-      const stream = await startCamera(facingMode);
+      const stream = await startCameraRef.current(facingMode);
       if (!stream || !isMounted) return;
 
-      const pc = initPeerConnection(stream);
+      const pc = initPeerConnectionRef.current(stream);
 
       if (isInitiatorRef.current) {
         setStatus('requesting');
@@ -540,9 +544,10 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
       clearInterval(watchdogInterval);
       unregisterListener();
       window.removeEventListener('keydown', handleKeyDown, true);
-      stopAllMedia();
+      stopAllMediaRef.current();
     };
-  }, [isOpen, acquireWakeLock, processSignal, registerSignalListener, startCamera, initPeerConnection, stopAllMedia]); // STABLE: strictly depends only on isOpen!
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]); // STABLE: strictly depends only on isOpen!
 
   // Flip mobile camera (front vs back) using seamless replaceTrack without renegotiation
   const toggleFacingMode = async () => {
@@ -556,17 +561,6 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
       const sender = pcRef.current.getSenders().find((s) => s.track?.kind === 'video');
       if (sender && newTrack) {
         await sender.replaceTrack(newTrack).catch(() => {});
-        try {
-          const params = sender.getParameters();
-          if (!params.encodings || params.encodings.length === 0) {
-            params.encodings = [{}];
-          }
-          params.encodings[0].maxBitrate = 350_000;
-          params.encodings[0].maxFramerate = 20;
-          sender.setParameters(params).catch(() => {});
-        } catch {
-          // ignore
-        }
       }
     }
   };

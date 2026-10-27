@@ -225,6 +225,8 @@ export default function WordChatApp() {
   const participantCountRef = useRef<number>(participantCount);
   participantCountRef.current = participantCount;
 
+  const runSyncRef = useRef<() => void>(() => {});
+
   // Audio Context Ref & HTML5 Audio Element Ref
   const audioCtxRef = useRef<AudioContext | null>(null);
   const audioElRef = useRef<HTMLAudioElement | null>(null);
@@ -659,7 +661,7 @@ export default function WordChatApp() {
     }
   }, []);
 
-  // 5-Minute Inactivity Auto-Logout Tracker
+  // 5-Minute Inactivity Auto-Logout Tracker (Suppressed while video call is active)
   useEffect(() => {
     lastActivityTime.current = Date.now();
     const recordActivity = () => {
@@ -679,6 +681,17 @@ export default function WordChatApp() {
     activityEvents.forEach((evt) => window.addEventListener(evt, recordActivity, { passive: true }));
 
     const interval = setInterval(() => {
+      // If a video call is active, confirming, or incoming invite is active, NEVER auto-logout!
+      const isCallActive =
+        isPreviewActiveRef.current ||
+        showPreviewConfirmRef.current ||
+        incomingPreviewInviteRef.current !== null;
+
+      if (isCallActive) {
+        lastActivityTime.current = Date.now();
+        return;
+      }
+
       if (isUnlockedRef.current) {
         const elapsed = Date.now() - lastActivityTime.current;
         if (elapsed >= 5 * 60 * 1000) {
@@ -701,6 +714,17 @@ export default function WordChatApp() {
       activityEvents.forEach((evt) => window.removeEventListener(evt, recordActivity));
     };
   }, [roomId]);
+
+  // Keep lastActivityTime fresh while video call is open so call is never interrupted by inactivity
+  useEffect(() => {
+    if (isPreviewActive || showPreviewConfirm || incomingPreviewInvite !== null) {
+      lastActivityTime.current = Date.now();
+      const keepAliveTimer = setInterval(() => {
+        lastActivityTime.current = Date.now();
+      }, 5000);
+      return () => clearInterval(keepAliveTimer);
+    }
+  }, [isPreviewActive, showPreviewConfirm, incomingPreviewInvite]);
 
   // Compute total words currently displayed on the page (visible only when unlocked)
   const wordCount = useMemo(() => {
@@ -756,6 +780,7 @@ export default function WordChatApp() {
             data,
           }),
         });
+        runSyncRef.current();
       } catch (err) {
         console.error('Signal transmission error:', err);
       }
@@ -963,9 +988,6 @@ export default function WordChatApp() {
         // Peer requested preview: show Join / Decline prompt ONLY if currently logged in (unlocked) AND not already in preview!
         if (isUnlockedRef.current && !isPreviewActiveRef.current) {
           setIncomingPreviewInvite({ from: sig.senderId });
-        } else if (!isUnlockedRef.current) {
-          // If co-author is logged out, strictly decline/reject preview invite
-          sendSignal('preview-decline').catch(() => {});
         }
       } else if (sig.type === 'preview-decline') {
         setIncomingPreviewInvite(null);
@@ -1005,28 +1027,56 @@ export default function WordChatApp() {
     [sendSignal]
   );
 
-  // Connect to Server-Sent Events (SSE) for real-time updates
+  // Connect to Server-Sent Events (SSE) with auto-healing reconnect watchdog
   useEffect(() => {
     if (!tabAuthorId) return;
 
     let eventSource: EventSource | null = null;
     let isMounted = true;
+    let reconnectTimer: NodeJS.Timeout | null = null;
+    let sseWatchdogInterval: NodeJS.Timeout | null = null;
+    let lastSseEventTime = Date.now();
 
     const connectSSE = () => {
-      const sseUrl = `/api/chat/stream?room=${encodeURIComponent(roomId)}&senderId=${encodeURIComponent(tabAuthorId)}`;
+      if (!isMounted) return;
+      if (eventSource) {
+        try {
+          eventSource.close();
+        } catch {
+          // ignore
+        }
+        eventSource = null;
+      }
+
+      const activeId = tabAuthorIdRef.current || tabAuthorId;
+      const sseUrl = `/api/chat/stream?room=${encodeURIComponent(roomId)}&senderId=${encodeURIComponent(activeId)}`;
       eventSource = new EventSource(sseUrl);
 
       eventSource.onopen = () => {
         isSseConnectedRef.current = true;
+        lastSseEventTime = Date.now();
       };
 
       eventSource.onerror = () => {
         isSseConnectedRef.current = false;
+        if (eventSource) {
+          try {
+            eventSource.close();
+          } catch {
+            // ignore
+          }
+          eventSource = null;
+        }
+        if (isMounted) {
+          if (reconnectTimer) clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(connectSSE, 1000);
+        }
       };
 
       eventSource.onmessage = (event) => {
         if (!isMounted) return;
         isSseConnectedRef.current = true;
+        lastSseEventTime = Date.now();
         try {
           const data = JSON.parse(event.data);
 
@@ -1178,9 +1228,33 @@ export default function WordChatApp() {
 
     connectSSE();
 
+    // Watchdog: If no SSE event received in 10s on visible tab, force reconnect
+    sseWatchdogInterval = setInterval(() => {
+      if (!isMounted) return;
+      const now = Date.now();
+      if (
+        !document.hidden &&
+        (!eventSource || eventSource.readyState === EventSource.CLOSED || now - lastSseEventTime > 10000)
+      ) {
+        connectSSE();
+      }
+    }, 4000);
+
+    const handleVisibilitySSE = () => {
+      if (!document.hidden && isMounted) {
+        if (!eventSource || eventSource.readyState !== EventSource.OPEN) {
+          connectSSE();
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilitySSE);
+
     return () => {
       isMounted = false;
       isSseConnectedRef.current = false;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (sseWatchdogInterval) clearInterval(sseWatchdogInterval);
+      document.removeEventListener('visibilitychange', handleVisibilitySSE);
       if (eventSource) {
         eventSource.close();
       }
@@ -1338,33 +1412,24 @@ export default function WordChatApp() {
           const isCallActiveOrConnecting =
             isPreviewActive || showPreviewConfirm || incomingPreviewInvite !== null;
 
-          let nextDelay = 20000;
-          if (isSseConnectedRef.current) {
-            if (isCallActiveOrConnecting) {
-              nextDelay = 3000;
-            } else if (document.hidden) {
-              nextDelay = 60000; // 60s when tab is backgrounded
-            } else if (!isUnlockedRef.current) {
-              nextDelay = 30000; // 30s when locked
-            } else {
-              nextDelay = 20000; // Active document with SSE: 20s safety heartbeat
-            }
+          let nextDelay = 2000;
+          if (isCallActiveOrConnecting) {
+            nextDelay = 800; // 800ms ultra-fast sync during call setup & active call
+          } else if (document.hidden) {
+            nextDelay = 6000; // 6s when tab in background (mobile screen off / minimized)
+          } else if (!isUnlockedRef.current) {
+            nextDelay = 3000; // 3s when locked in protected view
+          } else if (isSseConnectedRef.current) {
+            nextDelay = 2000; // 2s active collaborative editing & chatting
           } else {
-            // Offline / Disconnected SSE fallback mode:
-            if (isCallActiveOrConnecting) {
-              nextDelay = 1500;
-            } else if (document.hidden) {
-              nextDelay = 15000;
-            } else if (!isUnlockedRef.current) {
-              nextDelay = 10000;
-            } else {
-              nextDelay = 3500; // 3.5s when chatting without SSE
-            }
+            nextDelay = 1200; // 1.2s rapid fallback when SSE is reconnecting
           }
           syncTimeout = setTimeout(runSync, nextDelay);
         }
       }
     };
+
+    runSyncRef.current = runSync;
 
     // Immediate 0ms sync on mount
     runSync();
@@ -1477,6 +1542,7 @@ export default function WordChatApp() {
             )
           );
         }
+        runSyncRef.current();
       }
     } catch (err) {
       console.error('Network error sending message:', err);

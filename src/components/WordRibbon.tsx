@@ -29,6 +29,10 @@ import {
   Sun,
   FileText,
   Eye,
+  Smile,
+  Sparkles,
+  Table,
+  FilePlus,
 } from 'lucide-react';
 
 export interface FontSettings {
@@ -185,6 +189,57 @@ export const WordRibbon: React.FC<WordRibbonProps> = ({
                 </div>
               </div>
               <span className="text-[9px] text-[#888888] text-center font-medium">Views</span>
+            </div>
+          </div>
+        ) : activeTab === 'Insert' ? (
+          /* Insert Tab Specific Tools with Symbols & Emoji */
+          <div className="flex items-center space-x-3">
+            <div className={`flex flex-col justify-between pr-3 border-r ${darkMode ? 'border-[#333333]' : 'border-[#e1dfdd]'}`}>
+              <div className="flex items-center space-x-2">
+                <div className="flex flex-col items-center px-2 py-1 opacity-75">
+                  <FilePlus className="w-5 h-5 text-[#888888]" />
+                  <span className="text-[10px] mt-0.5">Page Break</span>
+                </div>
+                <div className="flex flex-col items-center px-2 py-1 opacity-75">
+                  <Table className="w-5 h-5 text-[#888888]" />
+                  <span className="text-[10px] mt-0.5">Table</span>
+                </div>
+              </div>
+              <span className="text-[9px] text-[#888888] text-center font-medium">Pages & Tables</span>
+            </div>
+
+            <div className={`flex flex-col justify-between pr-3 border-r ${darkMode ? 'border-[#333333]' : 'border-[#e1dfdd]'}`}>
+              <div className="flex items-center space-x-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.dispatchEvent(new CustomEvent('toggle-emoji-picker'));
+                  }}
+                  className={`flex flex-col items-center px-3 py-1 rounded cursor-pointer transition-colors ${
+                    darkMode ? 'hover:bg-[#2f2f2f] text-amber-400' : 'hover:bg-[#eae8e6] text-amber-600'
+                  }`}
+                  title="Open Emoji & Symbol Box"
+                >
+                  <Smile className="w-6 h-6" />
+                  <span className={`text-[10px] mt-0.5 font-semibold ${darkMode ? 'text-white' : 'text-[#201f1e]'}`}>
+                    Emoji Box
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.dispatchEvent(new CustomEvent('toggle-emoji-picker'));
+                  }}
+                  className={`flex flex-col items-center px-2.5 py-1 rounded cursor-pointer ${
+                    darkMode ? 'hover:bg-[#2f2f2f]' : 'hover:bg-[#eae8e6]'
+                  }`}
+                  title="Insert Symbols"
+                >
+                  <Sparkles className="w-5 h-5 text-[#888888]" />
+                  <span className="text-[10px] mt-0.5">Symbols</span>
+                </button>
+              </div>
+              <span className="text-[9px] text-[#888888] text-center font-medium">Symbols</span>
             </div>
           </div>
         ) : (
@@ -526,6 +581,21 @@ export const WordRibbon: React.FC<WordRibbonProps> = ({
             >
               <PenTool className="w-4 h-4 text-[#185abd]" />
               <span className={`text-[10px] mt-0.5 font-normal ${darkMode ? 'text-[#e0e0e0]' : 'text-[#323130]'}`}>Editor</span>
+            </button>
+
+            {/* Quick On-Screen Emoji & Symbol Button */}
+            <button
+              type="button"
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent('toggle-emoji-picker'));
+              }}
+              title="Insert Emoji & Symbols (☺)"
+              className={`flex flex-col items-center justify-center px-2 py-1 rounded cursor-pointer transition-colors ${
+                darkMode ? 'hover:bg-[#2f2f2f] text-amber-400' : 'hover:bg-[#eae8e6] text-amber-600'
+              }`}
+            >
+              <Smile className="w-4 h-4" />
+              <span className={`text-[10px] mt-0.5 font-normal ${darkMode ? 'text-[#e0e0e0]' : 'text-[#323130]'}`}>Emoji</span>
             </button>
           </div>
           <span className="text-[9px] text-[#888888] text-center font-medium">Editing</span>
