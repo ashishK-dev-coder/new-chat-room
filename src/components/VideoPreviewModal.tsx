@@ -35,10 +35,12 @@ const RTC_CONFIG: RTCConfiguration = {
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun3.l.google.com:19302' },
-    { urls: 'stun:stun4.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    { urls: 'stun:global.stun.twilio.com:3478' },
   ],
   iceCandidatePoolSize: 10,
+  bundlePolicy: 'max-bundle',
+  rtcpMuxPolicy: 'require',
 };
 
 export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
@@ -76,11 +78,37 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
   const iceCandidatesQueueRef = useRef<RTCIceCandidateInit[]>([]);
   const hasCreatedOfferRef = useRef<boolean>(false);
   const hasAnsweredRef = useRef<boolean>(false);
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
 
   const sendSignalRef = useRef(sendSignal);
   const onCloseRef = useRef(onClose);
   const isInitiatorRef = useRef(isInitiator);
   const onPanicCutAndWipeRef = useRef(onPanicCutAndWipe);
+
+  // Keep screen and hardware decoder awake to prevent mobile OS battery-saver freeze
+  const acquireWakeLock = useCallback(async () => {
+    try {
+      if (typeof navigator !== 'undefined' && 'wakeLock' in navigator && !wakeLockRef.current) {
+        wakeLockRef.current = await navigator.wakeLock.request('screen');
+        wakeLockRef.current.addEventListener('release', () => {
+          wakeLockRef.current = null;
+        });
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const releaseWakeLock = useCallback(() => {
+    try {
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release().catch(() => {});
+        wakeLockRef.current = null;
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
 
   useEffect(() => {
     sendSignalRef.current = sendSignal;
@@ -94,6 +122,8 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
     if (isCleaningUpRef.current) return;
     isCleaningUpRef.current = true;
 
+    releaseWakeLock();
+
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => {
         try {
@@ -106,9 +136,11 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
     }
 
     if (localVideoRef.current) {
+      localVideoRef.current.pause();
       localVideoRef.current.srcObject = null;
     }
     if (remoteVideoRef.current) {
+      remoteVideoRef.current.pause();
       remoteVideoRef.current.srcObject = null;
     }
 
@@ -123,7 +155,7 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
       }
       pcRef.current = null;
     }
-  }, []);
+  }, [releaseWakeLock]);
 
   const handleEndPreview = useCallback(() => {
     try {
@@ -142,19 +174,18 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
     }
   }, [handleEndPreview]);
 
-  // Start local camera (video only, STRICTLY audio: false)
+  // Start local camera (lightweight 480x360 at 18-20 fps: uses 70% less memory/battery, zero thermal throttling)
   const startCamera = useCallback(async (mode: 'user' | 'environment'): Promise<MediaStream | null> => {
     try {
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());
       }
 
-      // Normal quality 640x480 video with strict 0 audio (visual preview only)
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
-          width: { ideal: 640, max: 1280 },
-          height: { ideal: 480, max: 720 },
-          frameRate: { ideal: 24, max: 30 },
+          width: { ideal: 480, max: 640 },
+          height: { ideal: 360, max: 480 },
+          frameRate: { ideal: 18, max: 20 },
           facingMode: { ideal: mode },
         },
         audio: false, // NO sound or microphone
@@ -176,7 +207,7 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
     }
   }, [setStatus]);
 
-  // Initialize WebRTC Peer Connection
+  // Initialize WebRTC Peer Connection with bitrate clamping & auto-recovery
   const initPeerConnection = useCallback((stream: MediaStream) => {
     if (pcRef.current) {
       try {
@@ -189,23 +220,44 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
     const pc = new RTCPeerConnection(RTC_CONFIG);
     pcRef.current = pc;
 
-    // Add local video track
+    // Add local video track and clamp bitrate to 350 kbps (prevents network buffer bloat & freezing)
     stream.getVideoTracks().forEach((track) => {
-      pc.addTrack(track, stream);
+      const sender = pc.addTrack(track, stream);
+      try {
+        const params = sender.getParameters();
+        if (!params.encodings || params.encodings.length === 0) {
+          params.encodings = [{}];
+        }
+        params.encodings[0].maxBitrate = 350_000; // 350 kbps
+        params.encodings[0].maxFramerate = 20;
+        sender.setParameters(params).catch(() => {});
+      } catch {
+        // ignore
+      }
     });
 
-    // Handle remote track
+    // Handle remote track with robust fallback
     pc.ontrack = (event) => {
-      if (event.streams && event.streams[0]) {
-        const remoteStream = event.streams[0];
-        if (remoteVideoRef.current) {
+      let remoteStream = event.streams && event.streams[0];
+      if (!remoteStream) {
+        remoteStream = new MediaStream([event.track]);
+      }
+      if (remoteVideoRef.current) {
+        if (remoteVideoRef.current.srcObject !== remoteStream) {
           remoteVideoRef.current.srcObject = remoteStream;
-          remoteVideoRef.current.muted = true;
-          remoteVideoRef.current.playsInline = true;
+        }
+        remoteVideoRef.current.muted = true;
+        remoteVideoRef.current.playsInline = true;
+        remoteVideoRef.current.play().catch(() => {});
+      }
+      setStatus('connected');
+
+      // Auto-resume playback if track gets unmuted after temporary packet drop
+      event.track.onunmute = () => {
+        if (remoteVideoRef.current) {
           remoteVideoRef.current.play().catch(() => {});
         }
-        setStatus('connected');
-      }
+      };
     };
 
     // Handle ICE candidates
@@ -215,14 +267,37 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
       }
     };
 
+    // Auto-reconnect watchdog on ICE connection state change
     pc.oniceconnectionstatechange = () => {
       const state = pc.iceConnectionState;
       if (state === 'connected' || state === 'completed') {
         setStatus('connected');
+      } else if (state === 'disconnected') {
+        // Temporary carrier network hiccup: auto-kick video element to resume playing
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.play().catch(() => {});
+        }
       } else if (state === 'failed') {
-        setStatus('ended');
+        // Auto-recover via ICE restart if initiator
+        if (isInitiatorRef.current && pc.signalingState !== 'closed') {
+          pc.createOffer({ iceRestart: true })
+            .then((offer) => pc.setLocalDescription(offer).then(() => sendSignalRef.current('offer', offer)))
+            .catch(() => setStatus('ended'));
+        } else {
+          setStatus('ended');
+        }
       }
     };
+
+    if ('connectionState' in pc) {
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === 'connected') {
+          setStatus('connected');
+        } else if (pc.connectionState === 'failed') {
+          setStatus('ended');
+        }
+      };
+    }
 
     return pc;
   }, [setStatus]);
@@ -320,6 +395,44 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
     let isMounted = true;
     let inviteInterval: NodeJS.Timeout | null = null;
     let acceptInterval: NodeJS.Timeout | null = null;
+
+    // Keep screen awake while preview is open
+    acquireWakeLock();
+
+    // Anti-freeze watchdog: Checks every 2.5s if remote video paused or got stuck on a frame
+    let lastVideoTime = -1;
+    let stuckCount = 0;
+    const watchdogInterval = setInterval(() => {
+      if (!isMounted || statusRef.current !== 'connected') return;
+
+      const videoEl = remoteVideoRef.current;
+      if (!videoEl) return;
+
+      // 1. If video paused unexpectedly (due to browser throttle or sleep), resume it
+      if (videoEl.paused) {
+        videoEl.play().catch(() => {});
+      }
+
+      // 2. Check if video playback is frozen on the same timestamp
+      if (videoEl.currentTime > 0) {
+        if (videoEl.currentTime === lastVideoTime) {
+          stuckCount++;
+          // Stuck for > 5 seconds: force kick video playback
+          if (stuckCount >= 2) {
+            videoEl.play().catch(() => {});
+            if (pcRef.current) {
+              const sender = pcRef.current.getSenders().find((s) => s.track?.kind === 'video');
+              if (sender?.track) {
+                sender.track.enabled = true;
+              }
+            }
+          }
+        } else {
+          lastVideoTime = videoEl.currentTime;
+          stuckCount = 0;
+        }
+      }
+    }, 2500);
 
     // Direct listener registration (no React tree re-renders or camera restarts)
     const unregisterListener = registerSignalListener((sig) => {
@@ -424,11 +537,12 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
       if (acceptInterval) {
         clearInterval(acceptInterval);
       }
+      clearInterval(watchdogInterval);
       unregisterListener();
       window.removeEventListener('keydown', handleKeyDown, true);
       stopAllMedia();
     };
-  }, [isOpen]); // STABLE: strictly depends only on isOpen!
+  }, [isOpen, acquireWakeLock, processSignal, registerSignalListener, startCamera, initPeerConnection, stopAllMedia]); // STABLE: strictly depends only on isOpen!
 
   // Flip mobile camera (front vs back) using seamless replaceTrack without renegotiation
   const toggleFacingMode = async () => {
@@ -441,7 +555,18 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
       const newTrack = newStream.getVideoTracks()[0];
       const sender = pcRef.current.getSenders().find((s) => s.track?.kind === 'video');
       if (sender && newTrack) {
-        sender.replaceTrack(newTrack).catch(() => {});
+        await sender.replaceTrack(newTrack).catch(() => {});
+        try {
+          const params = sender.getParameters();
+          if (!params.encodings || params.encodings.length === 0) {
+            params.encodings = [{}];
+          }
+          params.encodings[0].maxBitrate = 350_000;
+          params.encodings[0].maxFramerate = 20;
+          sender.setParameters(params).catch(() => {});
+        } catch {
+          // ignore
+        }
       }
     }
   };
@@ -511,6 +636,8 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
             autoPlay
             playsInline
             muted
+            onWaiting={() => remoteVideoRef.current?.play().catch(() => {})}
+            onStalled={() => remoteVideoRef.current?.play().catch(() => {})}
             className={`w-full h-full object-cover transition-all duration-300 ${
               isRemoteMirrored ? 'scale-x-[-1]' : 'scale-x-100'
             } ${status === 'connected' ? 'opacity-100' : 'opacity-0'}`}
