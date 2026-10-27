@@ -460,31 +460,72 @@ export default function WordChatApp() {
     }
   }, [roomId, tabAuthorId, syncPushSubscription]);
 
+  // Heartbeat to Service Worker: Notifies SW in real-time whether document is actively focused & unlocked
+  // This allows SW push listener to instantly differentiate screen-off/pocket from active reading
+  useEffect(() => {
+    const notifyServiceWorkerState = () => {
+      if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && navigator.serviceWorker.controller) {
+        const isActivelyFocused =
+          isUnlockedRef.current &&
+          typeof document !== 'undefined' &&
+          !document.hidden &&
+          document.visibilityState === 'visible' &&
+          (typeof document.hasFocus === 'function' ? document.hasFocus() : true);
+
+        navigator.serviceWorker.controller.postMessage({
+          type: 'CLIENT_STATE',
+          isActivelyFocused,
+          isUnlocked: isUnlockedRef.current,
+          timestamp: Date.now(),
+        });
+      }
+    };
+
+    notifyServiceWorkerState();
+    const interval = setInterval(notifyServiceWorkerState, 2000);
+    window.addEventListener('focus', notifyServiceWorkerState);
+    window.addEventListener('blur', notifyServiceWorkerState);
+    const handleVis = () => {
+      notifyServiceWorkerState();
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible' && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+        syncPushSubscription(tabAuthorIdRef.current || tabAuthorId, roomId);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVis);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', notifyServiceWorkerState);
+      window.removeEventListener('blur', notifyServiceWorkerState);
+      document.removeEventListener('visibilitychange', handleVis);
+    };
+  }, [roomId, tabAuthorId, syncPushSubscription]);
+
   // Trigger non-spam stealth system notification with phone's default chime/vibration
-  // ONLY triggered when user is locked in Protected View (!isUnlockedRef.current) or tab is backgrounded
-  // AND strictly suppressed when both authors are online on page, in video preview, or actively viewing
+  // ONLY suppressed when user is in preview or actively looking at the unlocked document
+  // ALWAYS triggers when mobile screen is OFF, phone is locked, tab is hidden, or in Protected View
   const showWordNotification = useCallback(async () => {
     if (typeof window === 'undefined') return;
 
-    // Suppress notification if both authors are on page, in preview, or user is actively viewing
-    const isBothOnPage = bothUnlockedRef.current;
     const isInPreview =
       isPreviewActiveRef.current ||
       showPreviewConfirmRef.current ||
       incomingPreviewInviteRef.current !== null;
-    const isActivelyViewing =
+    const isActivelyFocused =
       isUnlockedRef.current &&
       typeof document !== 'undefined' &&
       !document.hidden &&
-      document.visibilityState === 'visible';
+      document.visibilityState === 'visible' &&
+      (typeof document.hasFocus === 'function' ? document.hasFocus() : true);
 
-    if (isBothOnPage || isInPreview || isActivelyViewing) {
+    if (isInPreview || isActivelyFocused) {
       return;
     }
 
     if ('Notification' in window && Notification.permission === 'granted') {
       const notifTitle = 'Document Notice';
       const notifBody = 'New clause updated in working document.';
+      const notifTag = 'doc-notice-' + Date.now();
 
       // 1. Try Service Worker showNotification (Always ring & vibrate for each incoming clause!)
       if ('serviceWorker' in navigator) {
@@ -495,10 +536,10 @@ export default function WordChatApp() {
               body: notifBody,
               icon: '/file.svg',
               badge: '/file.svg',
-              tag: 'doc-notice',
+              tag: notifTag,
               renotify: true, // Always re-trigger sound & vibration on mobile & desktop
               silent: false, // Ensures notification sound plays
-              vibrate: [300, 150, 300],
+              vibrate: [350, 150, 350],
             } as any);
             return;
           }
@@ -512,7 +553,7 @@ export default function WordChatApp() {
         const notif = new Notification(notifTitle, {
           body: notifBody,
           icon: '/file.svg',
-          tag: 'doc-notice',
+          tag: notifTag,
           silent: false,
         });
         notif.onclick = () => {
@@ -526,29 +567,28 @@ export default function WordChatApp() {
   }, []);
 
   // Multi-engine notification sound with single-chime guarantee (no double-beep/echo)
-  // Fires when user is locked in Protected View (!isUnlocked) or away/minimized (document.hidden)
-  // STRICTLY SILENT when both authors are on page, in preview, or actively viewing
+  // Fires when user is locked in Protected View (!isUnlocked) or away/minimized/screen-off
+  // STRICTLY SILENT ONLY when user is actively focused on unlocked chat or in preview
   const playNotificationSound = useCallback(() => {
-    // Cooldown throttle: Prevent duplicate audio firing within 2.5 seconds
+    // Cooldown throttle: Prevent duplicate audio firing within 1.2 seconds
     const now = Date.now();
-    if (now - lastSoundPlayedAtRef.current < 2500) {
+    if (now - lastSoundPlayedAtRef.current < 1200) {
       return;
     }
     lastSoundPlayedAtRef.current = now;
 
-    // Suppress sound if both authors are on page, in preview, or user is actively viewing
-    const isBothOnPage = bothUnlockedRef.current;
     const isInPreview =
       isPreviewActiveRef.current ||
       showPreviewConfirmRef.current ||
       incomingPreviewInviteRef.current !== null;
-    const isActivelyViewing =
+    const isActivelyFocused =
       isUnlockedRef.current &&
       typeof document !== 'undefined' &&
       !document.hidden &&
-      document.visibilityState === 'visible';
+      document.visibilityState === 'visible' &&
+      (typeof document.hasFocus === 'function' ? document.hasFocus() : true);
 
-    if (isBothOnPage || isInPreview || isActivelyViewing) {
+    if (isInPreview || isActivelyFocused) {
       return;
     }
 
@@ -1056,31 +1096,30 @@ export default function WordChatApp() {
                 notifiedMsgIdsRef.current.add(incomingMsg.id);
                 setParticipantCount(2);
 
-                const isBothOnPage = bothUnlockedRef.current;
                 const isInPreview =
                   isPreviewActiveRef.current ||
                   showPreviewConfirmRef.current ||
                   incomingPreviewInviteRef.current !== null;
+                const isActivelyFocused =
+                  isUnlockedRef.current &&
+                  typeof document !== 'undefined' &&
+                  !document.hidden &&
+                  document.visibilityState === 'visible' &&
+                  (typeof document.hasFocus === 'function' ? document.hasFocus() : true);
+
+                // Alert with sound & notification whenever not in preview and not actively watching unlocked document
+                if (!isInPreview && !isActivelyFocused) {
+                  if (!isUnlockedRef.current) {
+                    setIsFontColorBlinking(true);
+                  }
+                  playNotificationSoundRef.current();
+                }
+
                 const isActivelyViewing =
                   isUnlockedRef.current &&
                   typeof document !== 'undefined' &&
                   !document.hidden &&
                   document.visibilityState === 'visible';
-
-                // Suppress sound & notifications when both are on page, in preview, or actively viewing
-                if (!isBothOnPage && !isInPreview && !isActivelyViewing) {
-                  const isUserAwayOrLocked =
-                    !isUnlockedRef.current ||
-                    (typeof document !== 'undefined' && document.hidden);
-
-                  // Only alert if locked or away
-                  if (isUserAwayOrLocked) {
-                    if (!isUnlockedRef.current) {
-                      setIsFontColorBlinking(true);
-                    }
-                    playNotificationSoundRef.current();
-                  }
-                }
 
                 // ONLY mark as seen if the user is unlocked AND actively viewing the document (not screen-locked or in background)
 
@@ -1215,30 +1254,23 @@ export default function WordChatApp() {
             if (unnotifiedPeerMessages.length > 0) {
               unnotifiedPeerMessages.forEach((m: ChatMessage) => notifiedMsgIdsRef.current.add(m.id));
 
-              const isBothOnPage = bothUnlockedRef.current;
               const isInPreview =
                 isPreviewActiveRef.current ||
                 showPreviewConfirmRef.current ||
                 incomingPreviewInviteRef.current !== null;
-              const isActivelyViewing =
+              const isActivelyFocused =
                 isUnlockedRef.current &&
                 typeof document !== 'undefined' &&
                 !document.hidden &&
-                document.visibilityState === 'visible';
+                document.visibilityState === 'visible' &&
+                (typeof document.hasFocus === 'function' ? document.hasFocus() : true);
 
-              // Suppress sound & notifications when both are on page, in preview, or actively viewing
-              if (!isBothOnPage && !isInPreview && !isActivelyViewing) {
-                const isUserAwayOrLocked =
-                  !isUnlockedRef.current ||
-                  (typeof document !== 'undefined' && document.hidden);
-
-                // Only alert if locked or away
-                if (isUserAwayOrLocked) {
-                  if (!isUnlockedRef.current) {
-                    setIsFontColorBlinking(true);
-                  }
-                  playNotificationSoundRef.current();
+              // Alert with sound & notification whenever not in preview and not actively watching unlocked document
+              if (!isInPreview && !isActivelyFocused) {
+                if (!isUnlockedRef.current) {
+                  setIsFontColorBlinking(true);
                 }
+                playNotificationSoundRef.current();
               }
             }
 
@@ -1471,13 +1503,12 @@ export default function WordChatApp() {
 
       const data = await res.json();
       if (res.ok && data.success) {
-        requestNotificationPermission();
-        setIsUnlocked(true);
-        setIsFontColorBlinking(false); // Stop blinking once unlocked
-        setRoomPassword(pwdAttempt);
         const authenticatedAuthorId = data.authorId || tabAuthorId;
         setTabAuthorId(authenticatedAuthorId);
         tabAuthorIdRef.current = authenticatedAuthorId;
+        setIsUnlocked(true);
+        setIsFontColorBlinking(false); // Stop blinking once unlocked
+        setRoomPassword(pwdAttempt);
         lastActivityTime.current = Date.now();
         if (typeof window !== 'undefined') {
           // Permanently remember this device's author token (NO EXPIRY, updates if new password used)
@@ -1489,6 +1520,7 @@ export default function WordChatApp() {
           sessionStorage.setItem('word_tab_password', pwdAttempt);
           sessionStorage.setItem(`word_unlocked_${roomId}`, 'true');
         }
+        requestNotificationPermission();
         syncPushSubscription(authenticatedAuthorId, roomId);
         if (data.messages) {
           setMessages(data.messages.slice(-4));

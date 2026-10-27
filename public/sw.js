@@ -9,6 +9,17 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(self.clients.claim());
 });
 
+let lastActiveReportTime = 0;
+let isClientActivelyFocused = false;
+
+// Real-time heartbeat from document tab
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'CLIENT_STATE') {
+    isClientActivelyFocused = Boolean(event.data.isActivelyFocused);
+    lastActiveReportTime = event.data.timestamp || Date.now();
+  }
+});
+
 // High-Urgency Web Push Handler: Wakes up phone from lock screen & Doze mode
 self.addEventListener('push', (event) => {
   let payload = {
@@ -29,24 +40,30 @@ self.addEventListener('push', (event) => {
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
-      // Check if user has an active, visible document window open on screen
-      // If user is currently online looking at the page or live video preview, suppress push notification completely!
-      const isVisibleOnScreen = clientList.some(
-        (client) => client.visibilityState === 'visible'
+      const now = Date.now();
+      // Actively focused ONLY if client sent an active heartbeat within 3.5s AND has a focused window
+      const hasRecentHeartbeat = (now - lastActiveReportTime) < 3500;
+      const hasFocusedClient = clientList.some(
+        (client) => client.visibilityState === 'visible' && client.focused
       );
 
-      if (isVisibleOnScreen) {
+      const isUserActivelyLookingAtChat = isClientActivelyFocused && hasRecentHeartbeat && hasFocusedClient;
+
+      // Only suppress push if the user is actively holding phone/laptop, unlocked, and looking at the document
+      if (isUserActivelyLookingAtChat) {
         return;
       }
 
+      // Screen is OFF, phone is locked, tab is hidden, or document is locked in Protected View:
+      // Show system notification on lock screen, play default phone sound, and vibrate!
       return self.registration.showNotification(payload.title || 'Document Notice', {
         body: payload.body || 'New clause updated in document framework.',
         icon: '/file.svg',
         badge: '/file.svg',
-        tag: 'doc-notice',
-        renotify: true, // Re-trigger sound & vibration on mobile when device is locked/away
+        tag: 'doc-notice-' + Date.now(), // Unique tag ensures every new message triggers sound & vibration
+        renotify: true,
         silent: false, // Ensures default phone notification chime/ringtone plays
-        vibrate: [300, 150, 300],
+        vibrate: [350, 150, 350],
         data: {
           url: '/',
         },
