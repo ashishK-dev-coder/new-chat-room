@@ -64,7 +64,17 @@ export function isRedisWritable(): boolean {
 
 export function markRedisNonWritable(err?: unknown): void {
   const msg = err instanceof Error ? err.message : String(err || '');
-  if (msg.includes('NOPERM')) {
-    isWritable = false;
+  if (
+    msg.includes('NOPERM') ||
+    msg.includes('daily command limit') ||
+    msg.includes('limit exceeded') ||
+    msg.includes('quota') ||
+    msg.includes('exceeded') ||
+    msg.includes('ERR')
+  ) {
+    if (isWritable) {
+      console.warn('[Redis] Write commands disabled to protect quota or permissions:', msg);
+      isWritable = false;
+    }
   }
 }

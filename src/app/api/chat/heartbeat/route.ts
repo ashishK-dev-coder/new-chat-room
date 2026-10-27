@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { recordAuthorHeartbeat } from '@/lib/chatStore';
-import { getRedisClient } from '@/lib/redis';
 
 export async function POST(req: NextRequest) {
   try {

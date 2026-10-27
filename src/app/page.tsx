@@ -1306,27 +1306,27 @@ export default function WordChatApp() {
           const isCallActiveOrConnecting =
             isPreviewActive || showPreviewConfirm || incomingPreviewInvite !== null;
 
-          let nextDelay = 3500;
+          let nextDelay = 20000;
           if (isSseConnectedRef.current) {
             if (isCallActiveOrConnecting) {
-              nextDelay = 2000;
+              nextDelay = 3000;
+            } else if (document.hidden) {
+              nextDelay = 60000; // 60s when tab is backgrounded
+            } else if (!isUnlockedRef.current) {
+              nextDelay = 30000; // 30s when locked
+            } else {
+              nextDelay = 20000; // Active document with SSE: 20s safety heartbeat
+            }
+          } else {
+            // Offline / Disconnected SSE fallback mode:
+            if (isCallActiveOrConnecting) {
+              nextDelay = 1500;
             } else if (document.hidden) {
               nextDelay = 15000;
             } else if (!isUnlockedRef.current) {
-              nextDelay = 8000;
+              nextDelay = 10000;
             } else {
-              nextDelay = 3500; // Active document with SSE: 3.5s safety heartbeat
-            }
-          } else {
-            // Offline / Disconnected SSE fallback mode: rapid sync so chat never lags
-            if (isCallActiveOrConnecting) {
-              nextDelay = 1200;
-            } else if (document.hidden) {
-              nextDelay = 8000;
-            } else if (!isUnlockedRef.current) {
-              nextDelay = 5000;
-            } else {
-              nextDelay = 1800; // 1.8s when chatting without SSE
+              nextDelay = 3500; // 3.5s when chatting without SSE
             }
           }
           syncTimeout = setTimeout(runSync, nextDelay);
