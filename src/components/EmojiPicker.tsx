@@ -41,10 +41,17 @@ const EMOJI_DATABASE: EmojiItem[] = [
   { char: '😍', name: 'Smiling Face with Heart-Eyes', category: 'smileys', keywords: ['love', 'crush', 'heart', 'adore'] },
   { char: '🥰', name: 'Smiling Face with Hearts', category: 'smileys', keywords: ['love', 'hearts', 'affection', 'sweet'] },
   { char: '😘', name: 'Face Blowing a Kiss', category: 'smileys', keywords: ['kiss', 'love', 'flirt'] },
+  { char: '🤭', name: 'Face with Hand Over Mouth', category: 'smileys', keywords: ['giggle', 'laugh', 'chuckle', 'snicker', 'oops', 'covering mouth', 'secret', 'haha', 'snickering'] },
+  { char: '🫢', name: 'Face with Open Eyes and Hand Over Mouth', category: 'smileys', keywords: ['gasp', 'shock', 'surprise', 'oops', 'omg', 'mouth'] },
+  { char: '🫣', name: 'Face Peeking Eye', category: 'smileys', keywords: ['peek', 'peeking', 'shy', 'cant look', 'scared', 'hide', 'curious'] },
+  { char: '🤫', name: 'Shushing Face', category: 'smileys', keywords: ['shh', 'quiet', 'secret', 'silence'] },
   { char: '😋', name: 'Face Savoring Food', category: 'smileys', keywords: ['yum', 'delicious', 'tongue', 'tasty'] },
   { char: '😛', name: 'Face with Tongue', category: 'smileys', keywords: ['tongue', 'playful', 'silly'] },
   { char: '😜', name: 'Winking Face with Tongue', category: 'smileys', keywords: ['wink', 'tongue', 'joke', 'crazy'] },
   { char: '🤪', name: 'Zany Face', category: 'smileys', keywords: ['crazy', 'wild', 'goofy'] },
+  { char: '😝', name: 'Squinting Face with Tongue', category: 'smileys', keywords: ['tongue', 'playful', 'silly', 'joke'] },
+  { char: '🤑', name: 'Money-Mouth Face', category: 'smileys', keywords: ['money', 'rich', 'dollar', 'cash'] },
+  { char: '🤠', name: 'Cowboy Hat Face', category: 'smileys', keywords: ['cowboy', 'yeehaw', 'western'] },
   { char: '🤨', name: 'Face with Raised Eyebrow', category: 'smileys', keywords: ['suspicious', 'doubt', 'skeptical'] },
   { char: '🧐', name: 'Face with Monocle', category: 'smileys', keywords: ['curious', 'inspect', 'classy', 'smart'] },
   { char: '🤓', name: 'Nerd Face', category: 'smileys', keywords: ['nerd', 'geek', 'glasses', 'tech'] },
@@ -81,7 +88,6 @@ const EMOJI_DATABASE: EmojiItem[] = [
   { char: '🤗', name: 'Smiling Face with Open Hands', category: 'smileys', keywords: ['hug', 'open arms', 'warm'] },
   { char: '🫡', name: 'Saluting Face', category: 'smileys', keywords: ['salute', 'respect', 'yes sir', 'roger'] },
   { char: '🤔', name: 'Thinking Face', category: 'smileys', keywords: ['think', 'ponder', 'hmm', 'curious', 'question'] },
-  { char: '🤫', name: 'Shushing Face', category: 'smileys', keywords: ['shh', 'quiet', 'secret', 'silence'] },
   { char: '🤥', name: 'Lying Face', category: 'smileys', keywords: ['lie', 'pinocchio', 'fake'] },
   { char: '😶', name: 'Face Without Mouth', category: 'smileys', keywords: ['speechless', 'silent', 'mute'] },
   { char: '😐', name: 'Neutral Face', category: 'smileys', keywords: ['neutral', 'blank', 'meh'] },
@@ -95,6 +101,11 @@ const EMOJI_DATABASE: EmojiItem[] = [
   { char: '🤤', name: 'Drooling Face', category: 'smileys', keywords: ['drool', 'delicious', 'craving'] },
   { char: '😪', name: 'Sleepy Face', category: 'smileys', keywords: ['sleepy', 'bubble', 'tired'] },
   { char: '😵', name: 'Face with Crossed-Out Eyes', category: 'smileys', keywords: ['dizzy', 'dead', 'knockout'] },
+  { char: '😵‍💫', name: 'Face with Spiral Eyes', category: 'smileys', keywords: ['dizzy', 'spiral', 'hypnotized', 'confused', 'overwhelmed'] },
+  { char: '💀', name: 'Skull', category: 'smileys', keywords: ['dead', 'dying', 'laughing', 'lol', 'skeleton', 'funny', 'dead laugh'] },
+  { char: '☠️', name: 'Skull and Crossbones', category: 'smileys', keywords: ['danger', 'pirate', 'poison', 'dead'] },
+  { char: '🤡', name: 'Clown Face', category: 'smileys', keywords: ['clown', 'fool', 'joke', 'circus'] },
+  { char: '👻', name: 'Ghost', category: 'smileys', keywords: ['ghost', 'spooky', 'boo', 'halloween'] },
   { char: '🤐', name: 'Zipper-Mouth Face', category: 'smileys', keywords: ['secret', 'zip it', 'confidential', 'quiet'] },
   { char: '🥴', name: 'Woozy Face', category: 'smileys', keywords: ['drunk', 'woozy', 'tipsy', 'unsteady'] },
   { char: '🤢', name: 'Nauseated Face', category: 'smileys', keywords: ['sick', 'gross', 'nausea'] },
@@ -142,6 +153,12 @@ const EMOJI_DATABASE: EmojiItem[] = [
   { char: '🫂', name: 'People Hugging', category: 'gestures', keywords: ['hug', 'comfort', 'friends'] },
   { char: '👀', name: 'Eyes', category: 'gestures', keywords: ['look', 'see', 'preview', 'watch', 'peek'] },
   { char: '👁️', name: 'Eye', category: 'gestures', keywords: ['look', 'vision', 'single eye'] },
+  { char: '🤦', name: 'Person Facepalming', category: 'gestures', keywords: ['facepalm', 'disappointed', 'smh', 'duh'] },
+  { char: '🤷', name: 'Person Shrugging', category: 'gestures', keywords: ['shrug', 'idk', 'dunno', 'whatever'] },
+  { char: '💅', name: 'Nail Polish', category: 'gestures', keywords: ['nails', 'slay', 'sassy', 'glamour'] },
+  { char: '🙈', name: 'See-No-Evil Monkey', category: 'gestures', keywords: ['monkey', 'blind', 'shy', 'cant look', 'see no evil', 'hide'] },
+  { char: '🙉', name: 'Hear-No-Evil Monkey', category: 'gestures', keywords: ['monkey', 'deaf', 'cant hear', 'hear no evil'] },
+  { char: '🙊', name: 'Speak-No-Evil Monkey', category: 'gestures', keywords: ['monkey', 'mute', 'secret', 'speak no evil', 'oops'] },
 
   // --- Hearts & Love ---
   { char: '❤️', name: 'Red Heart', category: 'hearts', keywords: ['love', 'heart', 'red', 'like'] },
@@ -316,7 +333,7 @@ const EMOJI_DATABASE: EmojiItem[] = [
   { char: '🏴', name: 'Black Flag', category: 'symbols', keywords: ['pirate', 'dark'] },
 ];
 
-const DEFAULT_RECENT = ['😊', '👍', '😂', '❤️', '🔥', '✨', '🙏', '✅', '📄', '💡', '🎉', '👏'];
+const DEFAULT_RECENT = ['🤭', '😊', '👍', '😂', '❤️', '🔥', '✨', '🙏', '✅', '💡', '🎉', '👏', '💀', '👀', '🥺', '🤣'];
 
 interface EmojiPickerProps {
   isOpen: boolean;
@@ -348,7 +365,11 @@ export const EmojiPicker: React.FC<EmojiPickerProps> = ({
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) {
+          if (!parsed.includes('🤭')) {
+            parsed.unshift('🤭');
+          }
           setRecentEmojis(parsed);
+          return;
         }
       }
     } catch {
