@@ -5,7 +5,7 @@ import { sendPushToAuthor } from '@/lib/webPush';
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { id, roomId = 'default-room', senderId, senderName, text, password, replyTo } = body;
+    const { id, roomId = 'default-room', senderId, senderName, text, password, replyTo, snap } = body;
 
     if (!text || typeof text !== 'string' || !text.trim()) {
       return NextResponse.json({ error: 'Message cannot be empty' }, { status: 400 });
@@ -30,6 +30,7 @@ export async function POST(req: NextRequest) {
       senderName: resolvedSenderName,
       text: text.trim(),
       replyTo,
+      snap,
     });
 
     if (!result.success) {

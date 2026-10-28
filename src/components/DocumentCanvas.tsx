@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { CornerUpLeft, X, Clock, Check, CheckCheck, AlertCircle, Eye, Smile } from 'lucide-react';
+import { CornerUpLeft, X, Clock, Check, CheckCheck, AlertCircle, Eye, Smile, Camera, Lock } from 'lucide-react';
 import { ChatMessage, sortChatMessages } from '@/lib/chatStore';
 import { FontSettings } from './WordRibbon';
 import { EmojiPicker } from './EmojiPicker';
@@ -24,6 +24,8 @@ interface DocumentCanvasProps {
   onAcceptPreview?: () => void;
   onDeclinePreview?: () => void;
   onTyping?: (isTyping: boolean) => void;
+  onOpenSnapCapture?: () => void;
+  onOpenSnapViewer?: (message: ChatMessage) => void;
   darkMode?: boolean;
   zoomLevel?: number;
 }
@@ -87,6 +89,8 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   onAcceptPreview,
   onDeclinePreview,
   onTyping,
+  onOpenSnapCapture,
+  onOpenSnapViewer,
   darkMode = false,
   zoomLevel = 100,
 }) => {
@@ -666,15 +670,64 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                           <div className={`text-[10pt] sm:text-[10.5pt] leading-relaxed select-text break-words ${
                             darkMode ? 'text-[#f3f4f6]' : 'text-[#111827]'
                           }`}>
-                            <span
-                              className={`break-words ${
-                                fontSettings.bold ? 'font-bold' : ''
-                              } ${fontSettings.italic ? 'italic' : ''} ${
-                                fontSettings.underline ? 'underline' : ''
-                              }`}
-                            >
-                              {msg.text}
-                            </span>
+                            {msg.snap?.isSnap ? (
+                              <div className="my-1 select-none">
+                                {msg.snap.snapState === 'burned' ? (
+                                  // Case 1: Opened & Expired (Burned - Neither can view again)
+                                  <div className={`inline-flex items-center space-x-1.5 px-2.5 py-1 rounded border text-xs select-none opacity-50 ${
+                                    darkMode ? 'bg-black/30 border-white/10 text-white/40' : 'bg-black/5 border-black/10 text-black/40'
+                                  }`}>
+                                    <Lock className="w-3.5 h-3.5" />
+                                    <span className="font-mono">📷 Confidential Exhibit [Opened & Expired]</span>
+                                  </div>
+                                ) : isSelf ? (
+                                  // Case 2: Sender (Lockout: Delivered, sender cannot open)
+                                  <div className={`inline-flex items-center space-x-2 px-2.5 py-1 rounded border text-xs select-none ${
+                                    darkMode
+                                      ? 'bg-[#1e293b] border-[#38bdf8]/30 text-[#93c5fd]'
+                                      : 'bg-[#f0f9ff] border-[#0078d4]/30 text-[#0369a1]'
+                                  }`}>
+                                    <Camera className="w-3.5 h-3.5 text-[#0078d4] dark:text-[#38bdf8]" />
+                                    <span className="font-medium">📷 Confidential Document Exhibit (Snap)</span>
+                                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/10 dark:bg-white/10 flex items-center space-x-1">
+                                      <Lock className="w-2.5 h-2.5" />
+                                      <span>Delivered • Sender Locked</span>
+                                    </span>
+                                  </div>
+                                ) : (
+                                  // Case 3: Receiver (Unread: Tap to view once)
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onOpenSnapViewer?.(msg);
+                                    }}
+                                    className={`inline-flex items-center space-x-2 px-3 py-1.5 rounded-md border text-xs font-semibold cursor-pointer shadow-xs transition-all hover:scale-[1.02] active:scale-[0.98] ${
+                                      darkMode
+                                        ? 'bg-gradient-to-r from-amber-500/20 to-rose-500/20 border-amber-500/40 text-amber-300 hover:border-amber-400'
+                                        : 'bg-gradient-to-r from-amber-50 to-rose-50 border-amber-300 text-amber-900 hover:border-amber-400'
+                                    }`}
+                                    title="Tap to view confidential exhibit (View 1 time only)"
+                                  >
+                                    <Camera className="w-4 h-4 text-amber-500 animate-pulse" />
+                                    <span>📷 Confidential Exhibit [Tap to View]</span>
+                                    <span className="text-[10px] font-normal px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-800 dark:text-amber-200">
+                                      1 View Only
+                                    </span>
+                                  </button>
+                                )}
+                              </div>
+                            ) : (
+                              <span
+                                className={`break-words ${
+                                  fontSettings.bold ? 'font-bold' : ''
+                                } ${fontSettings.italic ? 'italic' : ''} ${
+                                  fontSettings.underline ? 'underline' : ''
+                                }`}
+                              >
+                                {msg.text}
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -766,6 +819,24 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                             }`}
                           />
                         )}
+
+                        {/* On-screen Snap Camera Button */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onOpenSnapCapture?.();
+                          }}
+                          className={`ml-1.5 p-1 rounded transition-colors shrink-0 cursor-pointer flex items-center justify-center ${
+                            darkMode
+                              ? 'text-[#9ca3af] hover:text-[#f3f4f6] hover:bg-[#334155]'
+                              : 'text-[#64748b] hover:text-[#185abd] hover:bg-[#e2e8f0]'
+                          }`}
+                          title="Capture & Send Confidential Exhibit (Snap)"
+                          aria-label="Capture Snap"
+                        >
+                          <Camera className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
+                        </button>
 
                         {/* On-screen Emoji Picker Button */}
                         <button

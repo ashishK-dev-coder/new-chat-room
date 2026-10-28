@@ -1,5 +1,15 @@
 import { getRedisClient, isRedisWritable, markRedisNonWritable } from './redis';
 
+export interface SnapMetadata {
+  isSnap: boolean;
+  mediaUrl?: string;
+  publicId?: string;
+  snapState: 'unread' | 'viewing' | 'burned';
+  openedAt?: number;
+  openedBy?: string;
+  duration?: number;
+}
+
 // Ephemeral store for strictly 2-person real-time chat with optional Upstash Redis Pub/Sub support
 export interface ChatMessage {
   id: string;
@@ -15,6 +25,7 @@ export interface ChatMessage {
     senderName: string;
     text: string;
   };
+  snap?: SnapMetadata;
 }
 
 // Canonical chronological message sorting:
@@ -341,6 +352,7 @@ export async function addMessageToRoom(
       senderName: string;
       text: string;
     };
+    snap?: SnapMetadata;
   }
 ): Promise<{ success: boolean; messages: ChatMessage[]; message?: ChatMessage; error?: string }> {
   const room = getOrCreateRoom(roomId);
@@ -378,6 +390,7 @@ export async function addMessageToRoom(
     timestamp: Date.now(),
     status: 'delivered', // Acknowledged on server
     replyTo: message.replyTo,
+    snap: message.snap,
   };
 
   // Deduplicate and push
@@ -421,6 +434,69 @@ export async function addMessageToRoom(
   }
 
   return { success: true, messages: room.messages, message: newMsg };
+}
+
+// Burn / Expire a view-once Snap message permanently
+export async function burnSnapMessage(
+  roomId: string,
+  messageId: string,
+  readerId: string
+): Promise<{ success: boolean; burnedMessage?: ChatMessage }> {
+  const room = getOrCreateRoom(roomId);
+  const now = Date.now();
+  const redis = getRedisClient();
+  let burnedMsg: ChatMessage | undefined;
+
+  room.messages = room.messages.map((m) => {
+    if (m.id === messageId && m.snap && m.snap.snapState !== 'burned') {
+      const updatedSnap: SnapMetadata = {
+        ...m.snap,
+        snapState: 'burned',
+        openedAt: now,
+        openedBy: readerId,
+        mediaUrl: undefined, // Immediately wipe media URL from memory and database
+      };
+      burnedMsg = {
+        ...m,
+        text: '📷 Confidential Exhibit [Opened & Expired]',
+        status: 'seen',
+        seenAt: now,
+        snap: updatedSnap,
+      };
+      return burnedMsg;
+    }
+    return m;
+  });
+
+  if (burnedMsg) {
+    const payload = JSON.stringify({
+      type: 'snap-burned',
+      messageId,
+      burnedBy: readerId,
+      burnedAt: now,
+      message: burnedMsg,
+      messages: room.messages,
+    });
+
+    const deadIds: string[] = [];
+    room.clients.forEach((sub, id) => {
+      try {
+        const ok = sub.send(`data: ${payload}\n\n`);
+        if (!ok) deadIds.push(id);
+      } catch {
+        deadIds.push(id);
+      }
+    });
+    deadIds.forEach((id) => room.clients.delete(id));
+
+    // Save updated messages (without media URL) to Redis
+    if (redis && isRedisWritable()) {
+      redis.set(`room:${roomId}:messages`, JSON.stringify(room.messages), { ex: 86400 }).catch(markRedisNonWritable);
+    }
+    return { success: true, burnedMessage: burnedMsg };
+  }
+
+  return { success: false };
 }
 
 // Mark messages as seen when the co-author opens / reads the document

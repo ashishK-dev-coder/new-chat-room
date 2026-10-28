@@ -31,6 +31,7 @@ import {
   Eye,
   Smile,
   Sparkles,
+  Camera,
   Table,
   FilePlus,
 } from 'lucide-react';
@@ -213,6 +214,21 @@ export const WordRibbon: React.FC<WordRibbonProps> = ({
                 <button
                   type="button"
                   onClick={() => {
+                    window.dispatchEvent(new CustomEvent('open-snap-capture'));
+                  }}
+                  className={`flex flex-col items-center px-3 py-1 rounded cursor-pointer transition-colors ${
+                    darkMode ? 'hover:bg-[#2f2f2f] text-emerald-400' : 'hover:bg-[#eae8e6] text-emerald-600'
+                  }`}
+                  title="Capture & Send Confidential Exhibit (Snap)"
+                >
+                  <Camera className="w-6 h-6" />
+                  <span className={`text-[10px] mt-0.5 font-semibold ${darkMode ? 'text-white' : 'text-[#201f1e]'}`}>
+                    Snap Exhibit
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
                     window.dispatchEvent(new CustomEvent('toggle-emoji-picker'));
                   }}
                   className={`flex flex-col items-center px-3 py-1 rounded cursor-pointer transition-colors ${
@@ -239,7 +255,7 @@ export const WordRibbon: React.FC<WordRibbonProps> = ({
                   <span className="text-[10px] mt-0.5">Symbols</span>
                 </button>
               </div>
-              <span className="text-[9px] text-[#888888] text-center font-medium">Symbols</span>
+              <span className="text-[9px] text-[#888888] text-center font-medium">Exhibits & Symbols</span>
             </div>
           </div>
         ) : (
@@ -581,6 +597,21 @@ export const WordRibbon: React.FC<WordRibbonProps> = ({
             >
               <PenTool className="w-4 h-4 text-[#185abd]" />
               <span className={`text-[10px] mt-0.5 font-normal ${darkMode ? 'text-[#e0e0e0]' : 'text-[#323130]'}`}>Editor</span>
+            </button>
+
+            {/* Quick On-Screen Snap Button */}
+            <button
+              type="button"
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent('open-snap-capture'));
+              }}
+              title="Capture & Send Exhibit Snap (📷)"
+              className={`flex flex-col items-center justify-center px-2 py-1 rounded cursor-pointer transition-colors ${
+                darkMode ? 'hover:bg-[#2f2f2f] text-emerald-400' : 'hover:bg-[#eae8e6] text-emerald-600'
+              }`}
+            >
+              <Camera className="w-4 h-4" />
+              <span className={`text-[10px] mt-0.5 font-normal ${darkMode ? 'text-[#e0e0e0]' : 'text-[#323130]'}`}>Snap</span>
             </button>
 
             {/* Quick On-Screen Emoji & Symbol Button */}

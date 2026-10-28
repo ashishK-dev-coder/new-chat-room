@@ -10,6 +10,8 @@ import { DocumentCanvas } from '@/components/DocumentCanvas';
 import { WordStatusBar } from '@/components/WordStatusBar';
 import { SettingsModal } from '@/components/SettingsModal';
 import { VideoPreviewModal } from '@/components/VideoPreviewModal';
+import { SnapCaptureModal } from '@/components/SnapCaptureModal';
+import { SnapViewerModal } from '@/components/SnapViewerModal';
 import { ChatMessage, sortChatMessages, WebRTCSignal } from '@/lib/chatStore';
 import { Eye, X } from 'lucide-react';
 
@@ -45,13 +47,15 @@ function mergeAndSortMessages(
         existing.status !== m.status ||
         existing.text !== m.text ||
         (!existing.seq && m.seq) ||
-        (!existing.seenAt && m.seenAt)
+        (!existing.seenAt && m.seenAt) ||
+        existing.snap?.snapState !== m.snap?.snapState
       ) {
         map.set(m.id, {
           ...existing,
           ...m,
           status: currentRank >= existingRank ? m.status : existing.status,
           seq: m.seq || existing.seq,
+          snap: m.snap || existing.snap,
         });
         changed = true;
       }
@@ -91,6 +95,10 @@ export default function WordChatApp() {
 
   // Secret 12-Minute Cloud AutoSave Pulse (Keeps Render free tier awake between 9 AM and 1 AM)
   const [autoSaveActive, setAutoSaveActive] = useState<boolean>(true);
+
+  // Snap Ephemeral Modal States
+  const [isSnapCaptureOpen, setIsSnapCaptureOpen] = useState<boolean>(false);
+  const [activeSnapToView, setActiveSnapToView] = useState<ChatMessage | null>(null);
 
   // Initialize persistent device identity token (NO EXPIRY, survives reload, auto-logout, and panic wipe)
   useEffect(() => {
@@ -1200,6 +1208,20 @@ export default function WordChatApp() {
                 data.messageIds.includes(m.id) ? { ...m, status: 'seen' as const } : m
               )
             );
+          } else if (data.type === 'snap-burned') {
+            const burnedId = data.message?.id || data.messageId;
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === burnedId
+                  ? {
+                      ...m,
+                      text: data.message?.text || '📷 Confidential Exhibit [Opened & Expired]',
+                      status: 'seen',
+                      snap: data.message?.snap || (m.snap ? { ...m.snap, snapState: 'burned', mediaUrl: undefined } : undefined),
+                    }
+                  : m
+              )
+            );
           } else if (data.type === 'clear') {
             setMessages([]);
             markedSeenIdsRef.current.clear();
@@ -1555,6 +1577,100 @@ export default function WordChatApp() {
     }
   };
 
+  // Send Ephemeral Snap handler (Uploads to Cloudinary / server and creates snap clause)
+  const handleSendSnap = async (imageBase64: string, duration: number = 10): Promise<boolean> => {
+    if (!imageBase64) return false;
+
+    lastActivityTime.current = Date.now();
+    const activeId =
+      tabAuthorIdRef.current === 'author-2' || tabAuthorId === 'author-2'
+        ? 'author-2'
+        : 'author-1';
+    const activeName = activeId === 'author-2' ? 'Author 2' : 'Author 1';
+
+    try {
+      const res = await fetch('/api/chat/snap/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId,
+          password: roomPassword,
+          imageBase64,
+          duration,
+        }),
+      });
+
+      if (!res.ok) {
+        if (res.status === 401) {
+          setIsUnlocked(false);
+          setShowPasswordModal(true);
+        }
+        return false;
+      }
+
+      const data = await res.json();
+      if (data?.message) {
+        setMessages((prev) => {
+          const { next } = mergeAndSortMessages(prev, [data.message]);
+          return next;
+        });
+      }
+      runSyncRef.current();
+      return true;
+    } catch (err) {
+      console.error('Failed to upload and send snap:', err);
+      return false;
+    }
+  };
+
+  // Burn Snap handler (Fires when receiver slides / dismisses the snap photo)
+  const handleBurnSnap = async (messageId: string, publicId?: string) => {
+    if (!messageId) return;
+
+    // Immediately update local state so the media is purged from memory
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === messageId
+          ? {
+              ...m,
+              text: '📷 Confidential Exhibit [Opened & Expired]',
+              status: 'seen',
+              snap: m.snap ? { ...m.snap, snapState: 'burned', mediaUrl: undefined } : undefined,
+            }
+          : m
+      )
+    );
+    setActiveSnapToView(null);
+
+    try {
+      await fetch('/api/chat/snap/burn', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId,
+          messageId,
+          readerId: tabAuthorId,
+          publicId,
+        }),
+      });
+    } catch (err) {
+      console.warn('Error burning snap on server:', err);
+    }
+  };
+
+  // Listen for global open-snap-capture event (e.g. from Word Ribbon)
+  useEffect(() => {
+    const handleOpenSnap = () => {
+      if (isUnlocked) {
+        setIsSnapCaptureOpen(true);
+      } else {
+        setShowPasswordModal(true);
+      }
+    };
+    window.addEventListener('open-snap-capture', handleOpenSnap);
+    return () => window.removeEventListener('open-snap-capture', handleOpenSnap);
+  }, [isUnlocked]);
+
   // Password verification handler (unlocks document and shows messages)
   const handleVerifyPassword = async (pwdAttempt: string) => {
     try {
@@ -1762,6 +1878,16 @@ export default function WordChatApp() {
             sendSignal('preview-decline');
             setIncomingPreviewInvite(null);
           }}
+          onOpenSnapCapture={() => {
+            if (isUnlocked) {
+              setIsSnapCaptureOpen(true);
+            } else {
+              setShowPasswordModal(true);
+            }
+          }}
+          onOpenSnapViewer={(msg) => {
+            setActiveSnapToView(msg);
+          }}
           darkMode={darkMode}
           zoomLevel={zoomLevel}
         />
@@ -1954,6 +2080,22 @@ export default function WordChatApp() {
         registerSignalListener={registerSignalListener}
         onPanicCutAndWipe={handleLocalPanicWipe}
         peerTyping={peerTyping}
+        darkMode={darkMode}
+      />
+
+      {/* 4. Ephemeral Snap Camera Capture Modal */}
+      <SnapCaptureModal
+        isOpen={isSnapCaptureOpen}
+        onClose={() => setIsSnapCaptureOpen(false)}
+        onSendSnap={handleSendSnap}
+        darkMode={darkMode}
+      />
+
+      {/* 5. Ephemeral Snap Full-Screen Viewer Modal (View-Once & Burn on Slide) */}
+      <SnapViewerModal
+        isOpen={activeSnapToView !== null}
+        message={activeSnapToView}
+        onCloseAndBurn={handleBurnSnap}
         darkMode={darkMode}
       />
     </div>

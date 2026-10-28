@@ -350,7 +350,7 @@ export const EmojiPicker: React.FC<EmojiPickerProps> = ({
   darkMode,
   className = '',
 }) => {
-  const [activeCategory, setActiveCategory] = useState<string>('smileys');
+  const [activeCategory, setActiveCategory] = useState<string>('recent');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [hoveredEmoji, setHoveredEmoji] = useState<EmojiItem | null>(null);
   const [recentEmojis, setRecentEmojis] = useState<string[]>(DEFAULT_RECENT);
@@ -377,9 +377,12 @@ export const EmojiPicker: React.FC<EmojiPickerProps> = ({
     }
   }, []);
 
-  // Autofocus search on open
+  // Reset to 'recent' category whenever the emoji picker opens & autofocus search
   useEffect(() => {
     if (isOpen) {
+      setActiveCategory('recent');
+      setSearchQuery('');
+      setHoveredEmoji(null);
       setTimeout(() => {
         searchInputRef.current?.focus();
       }, 100);
@@ -437,7 +440,8 @@ export const EmojiPicker: React.FC<EmojiPickerProps> = ({
     }
 
     if (activeCategory === 'recent') {
-      return recentEmojis.map((char) => {
+      const list = recentEmojis && recentEmojis.length > 0 ? recentEmojis : DEFAULT_RECENT;
+      return list.map((char) => {
         const found = EMOJI_DATABASE.find((e) => e.char === char);
         return found || { char, name: 'Recent Emoji', category: 'recent' as const, keywords: [] };
       });
@@ -544,6 +548,17 @@ export const EmojiPicker: React.FC<EmojiPickerProps> = ({
 
       {/* Emoji Grid Container */}
       <div className="flex-1 overflow-y-auto p-2 scrollbar-thin">
+        {!searchQuery && activeCategory === 'recent' && (
+          <div className="flex items-center justify-between px-1 pb-1.5 mb-1.5 border-b border-dashed border-gray-500/20 text-[11px] font-medium opacity-80">
+            <span className="flex items-center gap-1.5">
+              <Clock className="w-3 h-3 text-amber-500" />
+              Recently Used Emojis
+            </span>
+            <span className="text-[10px] opacity-70">
+              {displayedEmojis.length} recent
+            </span>
+          </div>
+        )}
         {displayedEmojis.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center p-4 opacity-60">
             <Smile className="w-8 h-8 mb-1.5 opacity-40" />
@@ -585,6 +600,8 @@ export const EmojiPicker: React.FC<EmojiPickerProps> = ({
           <span className="opacity-60 text-[10.5px]">
             {searchQuery
               ? `${displayedEmojis.length} matching emojis`
+              : activeCategory === 'recent'
+              ? 'Recent emojis • Click to insert'
               : 'Click emoji to insert into clause'}
           </span>
         )}
@@ -594,7 +611,7 @@ export const EmojiPicker: React.FC<EmojiPickerProps> = ({
             darkMode ? 'bg-[#334155] text-[#94a3b8]' : 'bg-[#e2e8f0] text-[#64748b]'
           }`}
         >
-          Clause Input
+          {activeCategory === 'recent' && !searchQuery ? 'Recent' : 'Clause Input'}
         </span>
       </div>
     </div>
