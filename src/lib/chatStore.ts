@@ -674,7 +674,22 @@ export function verifyRoomPassword(_roomId: string, passwordAttempt: string): bo
 }
 
 export interface WebRTCSignal {
-  type: 'preview-invite' | 'preview-accept' | 'preview-decline' | 'preview-end' | 'offer' | 'answer' | 'candidate' | 'typing';
+  type:
+    | 'preview-invite'
+    | 'preview-accept'
+    | 'preview-decline'
+    | 'preview-end'
+    | 'offer'
+    | 'answer'
+    | 'candidate'
+    | 'typing'
+    | 'voice-invite'
+    | 'voice-accept'
+    | 'voice-decline'
+    | 'voice-end'
+    | 'voice-offer'
+    | 'voice-answer'
+    | 'voice-candidate';
   senderId: string;
   targetId?: string;
   data?: unknown;

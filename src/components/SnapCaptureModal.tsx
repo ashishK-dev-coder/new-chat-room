@@ -12,6 +12,7 @@ import {
   AlertCircle,
   CheckCircle,
 } from 'lucide-react';
+import { isPanicKeyEvent } from '@/lib/panicUtils';
 
 interface SnapCaptureModalProps {
   isOpen: boolean;
@@ -161,6 +162,41 @@ export const SnapCaptureModal: React.FC<SnapCaptureModalProps> = ({
     setIsUploading(false);
     onClose();
   };
+
+  // Mobile & Desktop Panic Interceptor: Hardware buttons (Volume, Power, Back) or Screen Lock closes camera
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handlePanic = (e: KeyboardEvent) => {
+      if (isPanicKeyEvent(e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        handleClose();
+      }
+    };
+
+    const handleVisibility = () => {
+      if (document.hidden || document.visibilityState === 'hidden') {
+        handleClose();
+      }
+    };
+
+    const handlePageHide = () => {
+      handleClose();
+    };
+
+    window.addEventListener('keydown', handlePanic, true);
+    window.addEventListener('keyup', handlePanic, true);
+    document.addEventListener('visibilitychange', handleVisibility, true);
+    window.addEventListener('pagehide', handlePageHide, true);
+
+    return () => {
+      window.removeEventListener('keydown', handlePanic, true);
+      window.removeEventListener('keyup', handlePanic, true);
+      document.removeEventListener('visibilitychange', handleVisibility, true);
+      window.removeEventListener('pagehide', handlePageHide, true);
+    };
+  }, [isOpen, stopCamera, onClose]);
 
   if (!isOpen) return null;
 

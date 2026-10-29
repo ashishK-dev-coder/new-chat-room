@@ -15,6 +15,7 @@ import {
   SwitchCamera,
 } from 'lucide-react';
 import { WebRTCSignal } from '@/lib/chatStore';
+import { isPanicKeyEvent } from '@/lib/panicUtils';
 
 interface VideoPreviewModalProps {
   isOpen: boolean;
@@ -494,35 +495,9 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
 
     setup();
 
-    // Panic key handler: Windows key, Ctrl, Fn, Alt, Escape immediately cuts video call, wipes room and logs out
-    const isPanicKey = (e: KeyboardEvent): boolean => {
-      const key = e.key;
-      const code = e.code;
-      return (
-        key === 'Meta' ||
-        key === 'OS' ||
-        code === 'MetaLeft' ||
-        code === 'MetaRight' ||
-        key === 'Control' ||
-        code === 'ControlLeft' ||
-        code === 'ControlRight' ||
-        key === 'Alt' ||
-        code === 'AltLeft' ||
-        code === 'AltRight' ||
-        key === 'Fn' ||
-        key === 'FnLock' ||
-        code === 'Fn' ||
-        code === 'FnLock' ||
-        key === 'Escape' ||
-        code === 'Escape' ||
-        e.ctrlKey ||
-        e.altKey ||
-        e.metaKey
-      );
-    };
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (isPanicKey(e)) {
+    // Panic key handler: Mobile Volume buttons, Power, Android Back, Headset, Windows, Ctrl, Fn, Alt, Esc
+    const handlePanic = (e: KeyboardEvent) => {
+      if (isPanicKeyEvent(e)) {
         e.preventDefault();
         e.stopPropagation();
         handleEndPreview();
@@ -531,7 +506,48 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
         }
       }
     };
-    window.addEventListener('keydown', handleKeyDown, true);
+
+    // Mobile Screen Lock & Background Panic Interceptor (Screen off / sleep / tab hidden)
+    const handleVisibilityChange = () => {
+      if (document.hidden || document.visibilityState === 'hidden') {
+        handleEndPreview();
+        if (onPanicCutAndWipeRef.current) {
+          onPanicCutAndWipeRef.current();
+        }
+      }
+    };
+
+    const handlePageHide = () => {
+      handleEndPreview();
+      if (onPanicCutAndWipeRef.current) {
+        onPanicCutAndWipeRef.current();
+      }
+    };
+
+    // MediaSession hardware call / bluetooth headset button interceptor
+    const mediaActions: MediaSessionAction[] = [
+      'hangup' as MediaSessionAction,
+      'stop',
+      'pause',
+    ];
+    if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+      const onMediaPanic = () => {
+        handleEndPreview();
+        if (onPanicCutAndWipeRef.current) {
+          onPanicCutAndWipeRef.current();
+        }
+      };
+      mediaActions.forEach((act) => {
+        try {
+          navigator.mediaSession.setActionHandler(act, onMediaPanic);
+        } catch {}
+      });
+    }
+
+    window.addEventListener('keydown', handlePanic, true);
+    window.addEventListener('keyup', handlePanic, true);
+    document.addEventListener('visibilitychange', handleVisibilityChange, true);
+    window.addEventListener('pagehide', handlePageHide, true);
 
     return () => {
       isMounted = false;
@@ -543,7 +559,17 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
       }
       clearInterval(watchdogInterval);
       unregisterListener();
-      window.removeEventListener('keydown', handleKeyDown, true);
+      window.removeEventListener('keydown', handlePanic, true);
+      window.removeEventListener('keyup', handlePanic, true);
+      document.removeEventListener('visibilitychange', handleVisibilityChange, true);
+      window.removeEventListener('pagehide', handlePageHide, true);
+      if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+        mediaActions.forEach((act) => {
+          try {
+            navigator.mediaSession.setActionHandler(act, null);
+          } catch {}
+        });
+      }
       stopAllMediaRef.current();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

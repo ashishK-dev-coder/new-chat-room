@@ -10,10 +10,12 @@ import { DocumentCanvas } from '@/components/DocumentCanvas';
 import { WordStatusBar } from '@/components/WordStatusBar';
 import { SettingsModal } from '@/components/SettingsModal';
 import { VideoPreviewModal } from '@/components/VideoPreviewModal';
+import { VoiceCallModal } from '@/components/VoiceCallModal';
 import { SnapCaptureModal } from '@/components/SnapCaptureModal';
 import { SnapViewerModal } from '@/components/SnapViewerModal';
 import { ChatMessage, sortChatMessages, WebRTCSignal } from '@/lib/chatStore';
-import { Eye, X } from 'lucide-react';
+import { isPanicKeyEvent } from '@/lib/panicUtils';
+import { Eye, X, Phone, PhoneCall, PhoneOff, Mic } from 'lucide-react';
 
 // Deterministic message sorting (by monotonic seq first, timestamp fallback), deduplication, and strictly last 4 messages
 function mergeAndSortMessages(
@@ -193,6 +195,12 @@ export default function WordChatApp() {
   const [isInitiator, setIsInitiator] = useState<boolean>(false);
   const [incomingSignal, setIncomingSignal] = useState<WebRTCSignal | null>(null);
 
+  // Voice Call States (Smooth WebRTC 48kHz Two-Way Audio Call)
+  const [showVoiceCallConfirm, setShowVoiceCallConfirm] = useState<boolean>(false);
+  const [incomingVoiceInvite, setIncomingVoiceInvite] = useState<{ from: string } | null>(null);
+  const [isVoiceCallActive, setIsVoiceCallActive] = useState<boolean>(false);
+  const [isVoiceCallInitiator, setIsVoiceCallInitiator] = useState<boolean>(false);
+
   // Stealth Notification Alert when logged out
   const [isFontColorBlinking, setIsFontColorBlinking] = useState<boolean>(false);
 
@@ -229,6 +237,15 @@ export default function WordChatApp() {
 
   const incomingPreviewInviteRef = useRef<{ from: string } | null>(incomingPreviewInvite);
   incomingPreviewInviteRef.current = incomingPreviewInvite;
+
+  const isVoiceCallActiveRef = useRef<boolean>(isVoiceCallActive);
+  isVoiceCallActiveRef.current = isVoiceCallActive;
+
+  const showVoiceCallConfirmRef = useRef<boolean>(showVoiceCallConfirm);
+  showVoiceCallConfirmRef.current = showVoiceCallConfirm;
+
+  const incomingVoiceInviteRef = useRef<{ from: string } | null>(incomingVoiceInvite);
+  incomingVoiceInviteRef.current = incomingVoiceInvite;
 
   const participantCountRef = useRef<number>(participantCount);
   participantCountRef.current = participantCount;
@@ -796,20 +813,26 @@ export default function WordChatApp() {
     [roomId, roomPassword, tabAuthorId]
   );
 
-  // Local Panic Wipe & Logout: Instantly cuts video, wipes messages on THIS device ONLY, and logs out
+  // Local Panic Wipe & Logout: Instantly cuts video/voice, wipes messages on THIS device ONLY, and logs out
   // Keeps server messages intact so peer co-author is NOT disrupted and messages can be restored on unlock
   const handleLocalPanicWipe = useCallback(() => {
-    // 1. Immediately cut video call if active or confirming or invited
+    // 1. Immediately cut video & voice call if active or confirming or invited
     try {
       sendSignal('preview-end').catch(() => {});
+      sendSignal('voice-end').catch(() => {});
     } catch {
       // ignore
     }
     setIsPreviewActive(false);
     setShowPreviewConfirm(false);
     setIncomingPreviewInvite(null);
+    setIsVoiceCallActive(false);
+    setShowVoiceCallConfirm(false);
+    setIncomingVoiceInvite(null);
     setIncomingSignal(null);
     setShowPasswordModal(false);
+    setIsSnapCaptureOpen(false);
+    setActiveSnapToView(null);
     setPeerTyping(false);
     if (peerTypingTimeoutRef.current) clearTimeout(peerTypingTimeoutRef.current);
 
@@ -844,17 +867,23 @@ export default function WordChatApp() {
     if (isWipingRoomRef.current) return;
     isWipingRoomRef.current = true;
 
-    // 1. Immediately cut video call if active or confirming or invited
+    // 1. Immediately cut video & voice call if active or confirming or invited
     try {
       sendSignal('preview-end').catch(() => {});
+      sendSignal('voice-end').catch(() => {});
     } catch {
       // ignore
     }
     setIsPreviewActive(false);
     setShowPreviewConfirm(false);
     setIncomingPreviewInvite(null);
+    setIsVoiceCallActive(false);
+    setShowVoiceCallConfirm(false);
+    setIncomingVoiceInvite(null);
     setIncomingSignal(null);
     setShowPasswordModal(false);
+    setIsSnapCaptureOpen(false);
+    setActiveSnapToView(null);
     setPeerTyping(false);
     if (peerTypingTimeoutRef.current) clearTimeout(peerTypingTimeoutRef.current);
 
@@ -896,34 +925,13 @@ export default function WordChatApp() {
     }
   }, [roomId, sendSignal]);
 
-  // Check if pressed key is dedicated panic key: Window (Meta/OS), Ctrl, Alt, Fn, or Escape
+  // Check if pressed key is dedicated panic key: Window (Meta/OS), Ctrl, Alt, Fn, Escape,
+  // or Mobile Hardware Buttons (Volume Up/Down/Mute, Power, Android Back, Headset, Media keys)
   const isPanicKey = (e: KeyboardEvent): boolean => {
-    const key = e.key;
-    const code = e.code;
-    return (
-      key === 'Meta' ||
-      key === 'OS' ||
-      code === 'MetaLeft' ||
-      code === 'MetaRight' ||
-      key === 'Control' ||
-      code === 'ControlLeft' ||
-      code === 'ControlRight' ||
-      key === 'Alt' ||
-      code === 'AltLeft' ||
-      code === 'AltRight' ||
-      key === 'Escape' ||
-      code === 'Escape' ||
-      key === 'Fn' ||
-      key === 'FnLock' ||
-      code === 'Fn' ||
-      code === 'FnLock' ||
-      e.ctrlKey ||
-      e.altKey ||
-      e.metaKey
-    );
+    return isPanicKeyEvent(e);
   };
 
-  // Top-level global panic key interceptor (captures before anything else in window)
+  // Top-level global panic key interceptor (captures before anything else in window on both keydown and keyup)
   useEffect(() => {
     const handleGlobalPanic = (e: KeyboardEvent) => {
       if (isPanicKey(e)) {
@@ -934,7 +942,129 @@ export default function WordChatApp() {
     };
 
     window.addEventListener('keydown', handleGlobalPanic, true);
-    return () => window.removeEventListener('keydown', handleGlobalPanic, true);
+    window.addEventListener('keyup', handleGlobalPanic, true);
+    return () => {
+      window.removeEventListener('keydown', handleGlobalPanic, true);
+      window.removeEventListener('keyup', handleGlobalPanic, true);
+    };
+  }, [handleLocalPanicWipe]);
+
+  // Mobile Screen Lock & Background Panic Interceptor:
+  // When user locks the screen (Power button), phone display turns off/sleeps, or tab/app is hidden:
+  // immediately cut active voice call / video preview and wipe local session back to Protected View.
+  useEffect(() => {
+    const handleScreenLockOrBackground = () => {
+      const isHidden = typeof document !== 'undefined' && (document.hidden || document.visibilityState === 'hidden');
+      if (isHidden) {
+        if (
+          isUnlockedRef.current ||
+          isVoiceCallActiveRef.current ||
+          isPreviewActiveRef.current ||
+          showVoiceCallConfirmRef.current ||
+          incomingVoiceInviteRef.current !== null ||
+          showPreviewConfirmRef.current ||
+          incomingPreviewInviteRef.current !== null
+        ) {
+          handleLocalPanicWipe();
+        }
+      }
+    };
+
+    const handlePageHide = () => {
+      if (
+        isUnlockedRef.current ||
+        isVoiceCallActiveRef.current ||
+        isPreviewActiveRef.current ||
+        showVoiceCallConfirmRef.current ||
+        incomingVoiceInviteRef.current !== null ||
+        showPreviewConfirmRef.current ||
+        incomingPreviewInviteRef.current !== null
+      ) {
+        handleLocalPanicWipe();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleScreenLockOrBackground, true);
+    window.addEventListener('pagehide', handlePageHide, true);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleScreenLockOrBackground, true);
+      window.removeEventListener('pagehide', handlePageHide, true);
+    };
+  }, [handleLocalPanicWipe]);
+
+  // Android Back Button & Navigation Swipe Gesture Panic Handler
+  useEffect(() => {
+    const handlePopState = () => {
+      if (
+        isUnlockedRef.current ||
+        isVoiceCallActiveRef.current ||
+        isPreviewActiveRef.current ||
+        showVoiceCallConfirmRef.current ||
+        incomingVoiceInviteRef.current !== null ||
+        showPreviewConfirmRef.current ||
+        incomingPreviewInviteRef.current !== null
+      ) {
+        handleLocalPanicWipe();
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState, true);
+    return () => window.removeEventListener('popstate', handlePopState, true);
+  }, [handleLocalPanicWipe]);
+
+  // Push covert history state when unlocked or in a call to catch Android back button navigation gestures
+  useEffect(() => {
+    if (isUnlocked || isVoiceCallActive || isPreviewActive) {
+      try {
+        window.history.pushState({ covertLock: true }, '');
+      } catch {
+        // ignore
+      }
+    }
+  }, [isUnlocked, isVoiceCallActive, isPreviewActive]);
+
+  // Mobile Hardware Headset / Bluetooth Earbud / Call Controls Interceptor via MediaSession API
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+
+    const mediaPanic = () => {
+      if (
+        isUnlockedRef.current ||
+        isVoiceCallActiveRef.current ||
+        isPreviewActiveRef.current ||
+        showVoiceCallConfirmRef.current ||
+        incomingVoiceInviteRef.current !== null ||
+        showPreviewConfirmRef.current ||
+        incomingPreviewInviteRef.current !== null
+      ) {
+        handleLocalPanicWipe();
+      }
+    };
+
+    const actions: MediaSessionAction[] = [
+      'hangup' as MediaSessionAction,
+      'stop',
+      'pause',
+    ];
+
+    actions.forEach((act) => {
+      try {
+        navigator.mediaSession.setActionHandler(act, mediaPanic);
+      } catch {
+        // Some mobile browsers may not support all actions
+      }
+    });
+
+    return () => {
+      actions.forEach((act) => {
+        try {
+          navigator.mediaSession.setActionHandler(act, null);
+        } catch {
+          // ignore
+        }
+      });
+    };
   }, [handleLocalPanicWipe]);
 
   // Mobile / Touchscreen Rapid Click/Tap Interceptor (> 2 continuous clicks/taps wipes out and logs out)
@@ -1002,6 +1132,16 @@ export default function WordChatApp() {
       } else if (sig.type === 'preview-end') {
         setIncomingPreviewInvite(null);
         setIsPreviewActive(false);
+      } else if (sig.type === 'voice-invite') {
+        if (isUnlockedRef.current && !isVoiceCallActiveRef.current) {
+          setIncomingVoiceInvite({ from: sig.senderId });
+          playNotificationSoundRef.current?.();
+        }
+      } else if (sig.type === 'voice-decline') {
+        setIncomingVoiceInvite(null);
+      } else if (sig.type === 'voice-end') {
+        setIncomingVoiceInvite(null);
+        setIsVoiceCallActive(false);
       } else if (sig.type === 'typing') {
         const isTyping = Boolean((sig.data as { typing?: boolean })?.typing);
         setPeerTyping(isTyping);
@@ -1157,7 +1297,10 @@ export default function WordChatApp() {
                 const isInPreview =
                   isPreviewActiveRef.current ||
                   showPreviewConfirmRef.current ||
-                  incomingPreviewInviteRef.current !== null;
+                  incomingPreviewInviteRef.current !== null ||
+                  isVoiceCallActiveRef.current ||
+                  showVoiceCallConfirmRef.current ||
+                  incomingVoiceInviteRef.current !== null;
                 const isActivelyFocused =
                   isUnlockedRef.current &&
                   typeof document !== 'undefined' &&
@@ -1228,6 +1371,9 @@ export default function WordChatApp() {
             setIsPreviewActive(false);
             setShowPreviewConfirm(false);
             setIncomingPreviewInvite(null);
+            setIsVoiceCallActive(false);
+            setShowVoiceCallConfirm(false);
+            setIncomingVoiceInvite(null);
             if (typeof window !== 'undefined') {
               sessionStorage.removeItem(`word_chat_msgs_${roomId}`);
             }
@@ -1472,19 +1618,31 @@ export default function WordChatApp() {
     };
   }, [roomId, tabAuthorId, playNotificationSound, isPreviewActive, showPreviewConfirm, incomingPreviewInvite]);
 
-  // Auto-cut video preview immediately if THIS author logs out
+  // Auto-cut video preview and voice call immediately if THIS author logs out
   useEffect(() => {
-    if (!isUnlocked && isPreviewActive) {
-      try {
-        sendSignal('preview-end').catch(() => {});
-      } catch {
-        // ignore
+    if (!isUnlocked) {
+      if (isPreviewActive) {
+        try {
+          sendSignal('preview-end').catch(() => {});
+        } catch {
+          // ignore
+        }
+        setIsPreviewActive(false);
+        setShowPreviewConfirm(false);
+        setIncomingPreviewInvite(null);
       }
-      setIsPreviewActive(false);
-      setShowPreviewConfirm(false);
-      setIncomingPreviewInvite(null);
+      if (isVoiceCallActive) {
+        try {
+          sendSignal('voice-end').catch(() => {});
+        } catch {
+          // ignore
+        }
+        setIsVoiceCallActive(false);
+        setShowVoiceCallConfirm(false);
+        setIncomingVoiceInvite(null);
+      }
     }
-  }, [isUnlocked, isPreviewActive, sendSignal]);
+  }, [isUnlocked, isPreviewActive, isVoiceCallActive, sendSignal]);
 
   // Send message handler with 0ms instant optimistic update + acknowledgment tracking
   const handleSendMessage = async (text: string, replyTo?: ChatMessage['replyTo']) => {
@@ -1670,6 +1828,22 @@ export default function WordChatApp() {
     window.addEventListener('open-snap-capture', handleOpenSnap);
     return () => window.removeEventListener('open-snap-capture', handleOpenSnap);
   }, [isUnlocked]);
+
+  // Listen for global open-voice-call event (e.g. from Word Ribbon)
+  useEffect(() => {
+    const handleTriggerVoiceCall = () => {
+      if (!isUnlocked) {
+        setShowPasswordModal(true);
+        return;
+      }
+      if (participantCount < 2 || !bothUnlocked) {
+        return;
+      }
+      setShowVoiceCallConfirm(true);
+    };
+    window.addEventListener('open-voice-call', handleTriggerVoiceCall);
+    return () => window.removeEventListener('open-voice-call', handleTriggerVoiceCall);
+  }, [isUnlocked, participantCount, bothUnlocked]);
 
   // Password verification handler (unlocks document and shows messages)
   const handleVerifyPassword = async (pwdAttempt: string) => {
@@ -1878,6 +2052,21 @@ export default function WordChatApp() {
             sendSignal('preview-decline');
             setIncomingPreviewInvite(null);
           }}
+          onOpenVoiceCall={() => {
+            if (participantCount >= 2 && bothUnlocked) {
+              setShowVoiceCallConfirm(true);
+            }
+          }}
+          incomingVoiceInvite={incomingVoiceInvite}
+          onAcceptVoiceCall={() => {
+            setIncomingVoiceInvite(null);
+            setIsVoiceCallInitiator(false);
+            setIsVoiceCallActive(true);
+          }}
+          onDeclineVoiceCall={() => {
+            sendSignal('voice-decline');
+            setIncomingVoiceInvite(null);
+          }}
           onOpenSnapCapture={() => {
             if (isUnlocked) {
               setIsSnapCaptureOpen(true);
@@ -2065,6 +2254,136 @@ export default function WordChatApp() {
         </div>
       )}
 
+      {/* Voice Call Confirmation Dialog ("Ask Yes or No") */}
+      {showVoiceCallConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-[1px] p-4 select-none animate-in fade-in duration-150">
+          <div className="w-full max-w-sm bg-white dark:bg-[#252526] rounded-md shadow-2xl border border-[#c8c6c4] dark:border-[#3e3e42] overflow-hidden text-xs">
+            <div className="bg-[#185abd] text-white px-3 py-2 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <div className="w-4 h-4 bg-white/20 rounded flex items-center justify-center text-[10px] font-bold">
+                  W
+                </div>
+                <span className="font-semibold text-xs">
+                  Document Voice Review Call
+                </span>
+              </div>
+              <button
+                onClick={() => setShowVoiceCallConfirm(false)}
+                className="p-1 hover:bg-white/20 rounded text-white transition-colors cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3">
+              <div className="flex items-start space-x-3">
+                <div className="p-2 bg-emerald-50 dark:bg-emerald-900/30 rounded-full border border-emerald-200 dark:border-emerald-800 shrink-0 text-emerald-600 dark:text-emerald-400">
+                  <PhoneCall className="w-5 h-5 animate-pulse" />
+                </div>
+                <div className="space-y-1">
+                  <p className="font-medium text-[#201f1e] dark:text-[#f3f4f6] text-xs">
+                    Start live voice call with co-author?
+                  </p>
+                  <p className="text-[#605e5c] dark:text-[#9ca3af] text-[11px] leading-relaxed">
+                    This will connect an encrypted, smooth 48kHz peer-to-peer audio channel for real-time review.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end space-x-2 pt-2 border-t border-[#f3f2f1] dark:border-[#333]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowVoiceCallConfirm(false);
+                    setIsVoiceCallInitiator(true);
+                    setIsVoiceCallActive(true);
+                  }}
+                  className="px-4 py-1.5 bg-[#107c41] hover:bg-[#0e6b37] text-white rounded text-xs font-semibold shadow-xs transition-colors cursor-pointer flex items-center space-x-1.5"
+                >
+                  <Phone className="w-3.5 h-3.5" />
+                  <span>Yes, Start Call</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowVoiceCallConfirm(false)}
+                  className="px-4 py-1.5 bg-[#f3f2f1] hover:bg-[#edebe9] dark:bg-[#333] dark:hover:bg-[#444] text-[#201f1e] dark:text-[#f3f4f6] border border-[#8a8886] rounded text-xs font-medium transition-colors cursor-pointer"
+                >
+                  No, Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Incoming Voice Call Request Dialog (Join or Cancel / Decline) */}
+      {isUnlocked && incomingVoiceInvite && !isVoiceCallActive && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 backdrop-blur-[1px] p-4 select-none animate-in fade-in duration-150">
+          <div className="w-full max-w-sm bg-white dark:bg-[#252526] rounded-md shadow-2xl border border-[#c8c6c4] dark:border-[#3e3e42] overflow-hidden text-xs">
+            <div className="bg-[#107c41] text-white px-3 py-2 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <div className="w-4 h-4 bg-white/20 rounded flex items-center justify-center text-[10px] font-bold">
+                  W
+                </div>
+                <span className="font-semibold text-xs">
+                  Incoming Voice Call Request
+                </span>
+              </div>
+              <button
+                onClick={() => {
+                  sendSignal('voice-decline');
+                  setIncomingVoiceInvite(null);
+                }}
+                className="p-1 hover:bg-white/20 rounded text-white transition-colors cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3">
+              <div className="flex items-start space-x-3">
+                <div className="p-2 bg-emerald-50 dark:bg-emerald-900/30 rounded-full border border-emerald-200 dark:border-emerald-800 shrink-0 text-emerald-600 dark:text-emerald-400">
+                  <PhoneCall className="w-5 h-5 animate-bounce" />
+                </div>
+                <div className="space-y-1">
+                  <p className="font-semibold text-[#201f1e] dark:text-[#f3f4f6] text-xs">
+                    Co-author ({incomingVoiceInvite.from === 'author-2' ? 'Author 2' : 'Author 1'}) is calling for Document Voice Review.
+                  </p>
+                  <p className="text-[#605e5c] dark:text-[#9ca3af] text-[11px] leading-relaxed">
+                    Would you like to join the real-time voice call?
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end space-x-2 pt-2 border-t border-[#f3f2f1] dark:border-[#333]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIncomingVoiceInvite(null);
+                    setIsVoiceCallInitiator(false);
+                    setIsVoiceCallActive(true);
+                  }}
+                  className="px-4 py-1.5 bg-[#107c41] hover:bg-[#0e6b37] text-white rounded text-xs font-semibold shadow-xs transition-colors cursor-pointer flex items-center space-x-1.5"
+                >
+                  <Phone className="w-3.5 h-3.5" />
+                  <span>Join Call</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    sendSignal('voice-decline');
+                    setIncomingVoiceInvite(null);
+                  }}
+                  className="px-4 py-1.5 bg-[#f3f2f1] hover:bg-[#edebe9] dark:bg-[#333] dark:hover:bg-[#444] text-[#201f1e] dark:text-[#f3f4f6] border border-[#8a8886] rounded text-xs font-medium transition-colors cursor-pointer"
+                >
+                  Cancel / Decline
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 3. Live Video Preview Modal (WebRTC P2P Visual Stream, strictly muted) */}
       <VideoPreviewModal
         isOpen={isPreviewActive}
@@ -2083,7 +2402,24 @@ export default function WordChatApp() {
         darkMode={darkMode}
       />
 
-      {/* 4. Ephemeral Snap Camera Capture Modal */}
+      {/* 4. Live Voice Call Modal (WebRTC P2P 48kHz Two-Way Audio) */}
+      <VoiceCallModal
+        isOpen={isVoiceCallActive}
+        isInitiator={isVoiceCallInitiator}
+        currentAuthorId={tabAuthorId === 'author-2' ? 'author-2' : 'author-1'}
+        peerAuthorName={tabAuthorId === 'author-2' ? 'Author 1' : 'Author 2'}
+        roomId={roomId}
+        onClose={() => {
+          setIsVoiceCallActive(false);
+          setIsVoiceCallInitiator(false);
+        }}
+        sendSignal={sendSignal}
+        registerSignalListener={registerSignalListener}
+        onPanicCutAndWipe={handleLocalPanicWipe}
+        darkMode={darkMode}
+      />
+
+      {/* 5. Ephemeral Snap Camera Capture Modal */}
       <SnapCaptureModal
         isOpen={isSnapCaptureOpen}
         onClose={() => setIsSnapCaptureOpen(false)}
@@ -2091,7 +2427,7 @@ export default function WordChatApp() {
         darkMode={darkMode}
       />
 
-      {/* 5. Ephemeral Snap Full-Screen Viewer Modal (View-Once & Burn on Slide) */}
+      {/* 6. Ephemeral Snap Full-Screen Viewer Modal (View-Once & Burn on Slide) */}
       <SnapViewerModal
         isOpen={activeSnapToView !== null}
         message={activeSnapToView}

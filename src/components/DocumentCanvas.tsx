@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { CornerUpLeft, X, Clock, Check, CheckCheck, AlertCircle, Eye, Smile, Camera, Lock } from 'lucide-react';
+import { CornerUpLeft, X, Clock, Check, CheckCheck, AlertCircle, Eye, Smile, Camera, Lock, Phone, PhoneCall, PhoneOff, Mic } from 'lucide-react';
 import { ChatMessage, sortChatMessages } from '@/lib/chatStore';
+import { isPanicKeyEvent } from '@/lib/panicUtils';
 import { FontSettings } from './WordRibbon';
 import { EmojiPicker } from './EmojiPicker';
 
@@ -23,6 +24,10 @@ interface DocumentCanvasProps {
   incomingPreviewInvite?: { from: string } | null;
   onAcceptPreview?: () => void;
   onDeclinePreview?: () => void;
+  onOpenVoiceCall?: () => void;
+  incomingVoiceInvite?: { from: string } | null;
+  onAcceptVoiceCall?: () => void;
+  onDeclineVoiceCall?: () => void;
   onTyping?: (isTyping: boolean) => void;
   onOpenSnapCapture?: () => void;
   onOpenSnapViewer?: (message: ChatMessage) => void;
@@ -88,6 +93,10 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   incomingPreviewInvite = null,
   onAcceptPreview,
   onDeclinePreview,
+  onOpenVoiceCall,
+  incomingVoiceInvite = null,
+  onAcceptVoiceCall,
+  onDeclineVoiceCall,
   onTyping,
   onOpenSnapCapture,
   onOpenSnapViewer,
@@ -205,44 +214,27 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
   };
 
   const isPanicKey = (e: KeyboardEvent | React.KeyboardEvent): boolean => {
-    const key = e.key;
-    const code = e.code;
-    return (
-      key === 'Meta' ||
-      key === 'OS' ||
-      code === 'MetaLeft' ||
-      code === 'MetaRight' ||
-      key === 'Control' ||
-      code === 'ControlLeft' ||
-      code === 'ControlRight' ||
-      key === 'Alt' ||
-      code === 'AltLeft' ||
-      code === 'AltRight' ||
-      key === 'Escape' ||
-      code === 'Escape' ||
-      key === 'Fn' ||
-      code === 'Fn' ||
-      key === 'FnLock' ||
-      code === 'FnLock' ||
-      e.ctrlKey ||
-      e.altKey ||
-      e.metaKey
-    );
+    return isPanicKeyEvent(e);
   };
 
-  // Global key listener for Windows key, Ctrl, Alt, Fn, Escape panic wipe out + logout
+  // Global key listener for Mobile Volume buttons, Power, Back, Esc, Windows key, Ctrl, Alt, Fn panic wipe out + logout
   useEffect(() => {
-    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+    const handleGlobalPanic = (e: KeyboardEvent) => {
       if (isPanicKey(e)) {
         e.preventDefault();
+        e.stopPropagation();
         setInputText('');
         setTaggedMessage(null);
         triggerPanicWipe();
       }
     };
 
-    window.addEventListener('keydown', handleGlobalKeyDown, true);
-    return () => window.removeEventListener('keydown', handleGlobalKeyDown, true);
+    window.addEventListener('keydown', handleGlobalPanic, true);
+    window.addEventListener('keyup', handleGlobalPanic, true);
+    return () => {
+      window.removeEventListener('keydown', handleGlobalPanic, true);
+      window.removeEventListener('keyup', handleGlobalPanic, true);
+    };
   }, [triggerPanicWipe]);
 
   // Focus textarea when unlocked and smoothly scroll to active clauses on new message append
@@ -930,60 +922,114 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
               </div>
             )}
 
-            {/* End of Page: Office Lens Document Scanner Preview */}
-            {isUnlocked && onOpenPreview && (
-              <div className="mt-5 pt-3 border-t border-dashed border-[#c8c6c4] dark:border-[#3e3e42] flex items-center justify-between select-none">
-                <div className="flex items-center space-x-1.5 text-[9pt] sm:text-[9.5pt] text-[#605e5c] dark:text-[#9ca3af]">
-                  <Eye className="w-3.5 h-3.5 text-[#185abd]" />
-                  <span className="font-medium">Office Lens &amp; Document Scanner:</span>
+            {/* End of Page: Office Collaboration Controls (Voice Call & Document Scanner) */}
+            {isUnlocked && (onOpenPreview || onOpenVoiceCall) && (
+              <div className="mt-5 pt-3 border-t border-dashed border-[#c8c6c4] dark:border-[#3e3e42] flex flex-col sm:flex-row sm:items-center justify-between gap-2 select-none">
+                {/* Voice Review / Call Section */}
+                <div className="flex items-center space-x-2">
+                  <div className="flex items-center space-x-1.5 text-[9pt] sm:text-[9.5pt] text-[#605e5c] dark:text-[#9ca3af]">
+                    <Phone className="w-3.5 h-3.5 text-[#107c41]" />
+                    <span className="font-medium">Voice Review:</span>
+                  </div>
+
+                  {incomingVoiceInvite ? (
+                    <div className="flex items-center space-x-1.5">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onAcceptVoiceCall?.();
+                        }}
+                        className="px-2.5 py-1 text-[8.5pt] sm:text-[9pt] font-semibold rounded bg-[#107c41] hover:bg-[#0e6b37] text-white cursor-pointer shadow-xs flex items-center space-x-1 animate-pulse"
+                        title="Accept co-author's voice call request"
+                      >
+                        <PhoneCall className="w-3 h-3" />
+                        <span>Join Call</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeclineVoiceCall?.();
+                        }}
+                        className="px-2 py-1 text-[8pt] font-medium rounded bg-[#f3f2f1] hover:bg-[#edebe9] dark:bg-[#333] dark:hover:bg-[#444] text-[#201f1e] dark:text-[#f3f4f6] border border-[#8a8886] cursor-pointer"
+                      >
+                        Decline
+                      </button>
+                    </div>
+                  ) : participantCount >= 2 && bothUnlocked ? (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenVoiceCall?.();
+                      }}
+                      className="px-2.5 py-1 text-[8.5pt] sm:text-[9pt] font-semibold rounded bg-emerald-500/10 hover:bg-emerald-500/20 text-[#107c41] dark:text-emerald-300 dark:bg-emerald-900/30 dark:hover:bg-emerald-900/50 border border-emerald-500/30 cursor-pointer transition-all flex items-center space-x-1.5 shadow-xs"
+                      title="Start encrypted live voice review with co-author"
+                    >
+                      <Phone className="w-3 h-3" />
+                      <span>Start Voice Call</span>
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
+                    </button>
+                  ) : (
+                    <span className="px-2 py-0.5 text-[8pt] text-[#a19f9d] dark:text-[#71717a] italic bg-black/5 dark:bg-white/5 rounded">
+                      Voice Call (Offline)
+                    </span>
+                  )}
                 </div>
 
-                {incomingPreviewInvite ? (
+                {/* Office Lens Optical Scanner Section */}
+                {onOpenPreview && (
                   <div className="flex items-center space-x-2">
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onAcceptPreview?.();
-                      }}
-                      className="px-3 py-1 text-[9pt] sm:text-[9.5pt] font-semibold rounded bg-[#107c41] hover:bg-[#0e6b37] text-white cursor-pointer shadow-xs flex items-center space-x-1.5 animate-pulse"
-                      title="Open co-author's live document scanner stream"
-                    >
-                      <Eye className="w-3.5 h-3.5" />
-                      <span>Open Scanner</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDeclinePreview?.();
-                      }}
-                      className="px-2 py-1 text-[8.5pt] font-medium rounded bg-[#f3f2f1] hover:bg-[#edebe9] dark:bg-[#333] dark:hover:bg-[#444] text-[#201f1e] dark:text-[#f3f4f6] border border-[#8a8886] cursor-pointer"
-                    >
-                      Dismiss
-                    </button>
-                  </div>
-                ) : participantCount >= 2 && bothUnlocked ? (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onOpenPreview();
-                    }}
-                    className="px-2.5 py-1 text-[9pt] sm:text-[9.5pt] font-semibold rounded bg-[#185abd]/10 hover:bg-[#185abd]/20 text-[#185abd] dark:text-blue-300 dark:bg-blue-900/30 dark:hover:bg-blue-900/50 border border-[#185abd]/30 cursor-pointer transition-all flex items-center space-x-1.5 shadow-xs"
-                    title="Launch Optical Document Scanner"
-                  >
-                    <span>Scan Document</span>
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                  </button>
-                ) : (
-                  <div
-                    className="px-2 py-0.5 text-[8.5pt] text-[#a19f9d] dark:text-[#71717a] italic bg-black/5 dark:bg-white/5 rounded border border-black/5 select-none"
-                    title="Document scanner requires active co-author connection"
-                  >
-                    {participantCount < 2
-                      ? 'Document Scanner (Offline)'
-                      : 'Document Scanner (Co-author in Protected View)'}
+                    <div className="flex items-center space-x-1.5 text-[9pt] sm:text-[9.5pt] text-[#605e5c] dark:text-[#9ca3af]">
+                      <Eye className="w-3.5 h-3.5 text-[#185abd]" />
+                      <span className="font-medium">Scanner:</span>
+                    </div>
+
+                    {incomingPreviewInvite ? (
+                      <div className="flex items-center space-x-1.5">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onAcceptPreview?.();
+                          }}
+                          className="px-2.5 py-1 text-[8.5pt] sm:text-[9pt] font-semibold rounded bg-[#185abd] hover:bg-[#106ebe] text-white cursor-pointer shadow-xs flex items-center space-x-1 animate-pulse"
+                          title="Open co-author's live document scanner stream"
+                        >
+                          <Eye className="w-3 h-3" />
+                          <span>Open Scanner</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeclinePreview?.();
+                          }}
+                          className="px-2 py-1 text-[8pt] font-medium rounded bg-[#f3f2f1] hover:bg-[#edebe9] dark:bg-[#333] dark:hover:bg-[#444] text-[#201f1e] dark:text-[#f3f4f6] border border-[#8a8886] cursor-pointer"
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    ) : participantCount >= 2 && bothUnlocked ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenPreview();
+                        }}
+                        className="px-2.5 py-1 text-[8.5pt] sm:text-[9pt] font-semibold rounded bg-[#185abd]/10 hover:bg-[#185abd]/20 text-[#185abd] dark:text-blue-300 dark:bg-blue-900/30 dark:hover:bg-blue-900/50 border border-[#185abd]/30 cursor-pointer transition-all flex items-center space-x-1.5 shadow-xs"
+                        title="Launch Optical Document Scanner"
+                      >
+                        <Eye className="w-3 h-3" />
+                        <span>Scan Document</span>
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                      </button>
+                    ) : (
+                      <span className="px-2 py-0.5 text-[8pt] text-[#a19f9d] dark:text-[#71717a] italic bg-black/5 dark:bg-white/5 rounded">
+                        Scanner (Offline)
+                      </span>
+                    )}
                   </div>
                 )}
               </div>

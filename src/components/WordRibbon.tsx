@@ -34,6 +34,8 @@ import {
   Camera,
   Table,
   FilePlus,
+  Phone,
+  PhoneCall,
 } from 'lucide-react';
 
 export interface FontSettings {
@@ -214,10 +216,25 @@ export const WordRibbon: React.FC<WordRibbonProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    window.dispatchEvent(new CustomEvent('open-snap-capture'));
+                    window.dispatchEvent(new CustomEvent('open-voice-call'));
                   }}
                   className={`flex flex-col items-center px-3 py-1 rounded cursor-pointer transition-colors ${
                     darkMode ? 'hover:bg-[#2f2f2f] text-emerald-400' : 'hover:bg-[#eae8e6] text-emerald-600'
+                  }`}
+                  title="Document Voice Review Call"
+                >
+                  <Phone className="w-6 h-6" />
+                  <span className={`text-[10px] mt-0.5 font-semibold ${darkMode ? 'text-white' : 'text-[#201f1e]'}`}>
+                    Voice Call
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.dispatchEvent(new CustomEvent('open-snap-capture'));
+                  }}
+                  className={`flex flex-col items-center px-3 py-1 rounded cursor-pointer transition-colors ${
+                    darkMode ? 'hover:bg-[#2f2f2f] text-sky-400' : 'hover:bg-[#eae8e6] text-sky-600'
                   }`}
                   title="Capture & Send Confidential Exhibit (Snap)"
                 >
@@ -599,6 +616,21 @@ export const WordRibbon: React.FC<WordRibbonProps> = ({
               <span className={`text-[10px] mt-0.5 font-normal ${darkMode ? 'text-[#e0e0e0]' : 'text-[#323130]'}`}>Editor</span>
             </button>
 
+            {/* Quick On-Screen Voice Call Button */}
+            <button
+              type="button"
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent('open-voice-call'));
+              }}
+              title="Start Live Voice Review Call (📞)"
+              className={`flex flex-col items-center justify-center px-2 py-1 rounded cursor-pointer transition-colors ${
+                darkMode ? 'hover:bg-[#2f2f2f] text-emerald-400' : 'hover:bg-[#eae8e6] text-emerald-600'
+              }`}
+            >
+              <Phone className="w-4 h-4" />
+              <span className={`text-[10px] mt-0.5 font-normal ${darkMode ? 'text-[#e0e0e0]' : 'text-[#323130]'}`}>Call</span>
+            </button>
+
             {/* Quick On-Screen Snap Button */}
             <button
               type="button"
@@ -607,7 +639,7 @@ export const WordRibbon: React.FC<WordRibbonProps> = ({
               }}
               title="Capture & Send Exhibit Snap (📷)"
               className={`flex flex-col items-center justify-center px-2 py-1 rounded cursor-pointer transition-colors ${
-                darkMode ? 'hover:bg-[#2f2f2f] text-emerald-400' : 'hover:bg-[#eae8e6] text-emerald-600'
+                darkMode ? 'hover:bg-[#2f2f2f] text-sky-400' : 'hover:bg-[#eae8e6] text-sky-600'
               }`}
             >
               <Camera className="w-4 h-4" />

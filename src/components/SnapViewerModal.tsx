@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { ArrowLeft, Flame, ShieldAlert, ChevronDown } from 'lucide-react';
 import { ChatMessage } from '@/lib/chatStore';
+import { isPanicKeyEvent } from '@/lib/panicUtils';
 
 interface SnapViewerModalProps {
   isOpen: boolean;
@@ -99,17 +100,38 @@ export const SnapViewerModal: React.FC<SnapViewerModalProps> = ({
     }
   };
 
-  // Keyboard escape handler
+  // Mobile & Desktop Panic Interceptor: Hardware buttons (Volume, Power, Back) or Screen Lock immediately burns and closes
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+    const handlePanic = (e: KeyboardEvent) => {
+      if (isPanicKeyEvent(e)) {
+        e.preventDefault();
+        e.stopPropagation();
         triggerBurnAndClose();
       }
     };
+
+    const handleVisibility = () => {
+      if (document.hidden || document.visibilityState === 'hidden') {
+        triggerBurnAndClose();
+      }
+    };
+
+    const handlePageHide = () => {
+      triggerBurnAndClose();
+    };
+
     if (isOpen) {
-      window.addEventListener('keydown', handleKeyDown);
+      window.addEventListener('keydown', handlePanic, true);
+      window.addEventListener('keyup', handlePanic, true);
+      document.addEventListener('visibilitychange', handleVisibility, true);
+      window.addEventListener('pagehide', handlePageHide, true);
     }
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handlePanic, true);
+      window.removeEventListener('keyup', handlePanic, true);
+      document.removeEventListener('visibilitychange', handleVisibility, true);
+      window.removeEventListener('pagehide', handlePageHide, true);
+    };
   }, [isOpen, triggerBurnAndClose]);
 
   if (!isOpen || !message || !mediaUrl || hasBurned) return null;
