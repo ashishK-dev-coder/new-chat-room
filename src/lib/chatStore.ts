@@ -554,6 +554,85 @@ export async function markMessagesAsSeen(
   return { success: true, seenIds };
 }
 
+// Ephemeral Disappearing Messages Engine (Snapchat Style):
+// When an author logs out, leaves, or enters panic mode, all messages that have ALREADY BEEN SEEN
+// by the other author (status === 'seen' or seenAt > 0) are permanently wiped/disappeared from the room.
+// Unseen messages (delivered or pending, not yet seen by recipient) are strictly PRESERVED
+// so the recipient can still read them upon unlocking!
+export function pruneSeenMessages(
+  roomId: string,
+  senderId?: string
+): { success: boolean; prunedCount: number; remainingCount: number } {
+  const room = getOrCreateRoom(roomId);
+  const redis = getRedisClient();
+
+  const prunedIds: string[] = [];
+  room.messages = (room.messages || []).filter((m) => {
+    const isSeen = m.status === 'seen' || Boolean(m.seenAt);
+    const isBurnedSnap = m.snap?.isSnap && m.snap.snapState === 'burned';
+    if (isSeen || isBurnedSnap) {
+      prunedIds.push(m.id);
+      return false; // Prune seen / burned message
+    }
+    return true; // Keep unseen message for the recipient
+  });
+
+  const prunedCount = prunedIds.length;
+
+  if (prunedCount > 0) {
+    const payload = JSON.stringify({
+      type: 'prune-seen',
+      prunedIds,
+      remainingMessages: room.messages,
+      prunedBy: senderId || 'panic',
+      timestamp: Date.now(),
+    });
+
+    const deadIds: string[] = [];
+    room.clients.forEach((sub, id) => {
+      try {
+        const ok = sub.send(`data: ${payload}\n\n`);
+        if (!ok) deadIds.push(id);
+      } catch {
+        deadIds.push(id);
+      }
+    });
+    deadIds.forEach((id) => room.clients.delete(id));
+
+    if (redis && isRedisWritable()) {
+      redis.set(`room:${roomId}:messages`, JSON.stringify(room.messages), { ex: 86400 }).catch(markRedisNonWritable);
+    }
+  }
+
+  return { success: true, prunedCount, remainingCount: room.messages.length };
+}
+
+export async function pruneSeenMessagesAsync(
+  roomId: string,
+  senderId?: string
+): Promise<{ success: boolean; prunedCount: number; remainingCount: number }> {
+  const room = getOrCreateRoom(roomId);
+  const redis = getRedisClient();
+
+  // Cold start check: if room not yet loaded from Redis, load it first
+  if (!room.hasLoadedFromRedis && redis && (!room.messages || room.messages.length === 0)) {
+    try {
+      const data = await redis.get<string | ChatMessage[]>(`room:${roomId}:messages`);
+      if (data) {
+        const parsed: ChatMessage[] = typeof data === 'string' ? JSON.parse(data) : data;
+        if (Array.isArray(parsed)) {
+          room.messages = parsed;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    room.hasLoadedFromRedis = true;
+  }
+
+  return pruneSeenMessages(roomId, senderId);
+}
+
 export function clearRoomMessages(roomId: string, senderId?: string): { success: boolean } {
   const room = getOrCreateRoom(roomId);
   room.messages = [];

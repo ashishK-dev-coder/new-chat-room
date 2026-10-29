@@ -98,3 +98,4 @@ export function isPanicKeyEvent(e: KeyboardEvent | React.KeyboardEvent): boolean
 
   return false;
 }
+

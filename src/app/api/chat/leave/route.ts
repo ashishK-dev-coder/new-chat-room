@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { removeAuthorFromRoom } from '@/lib/chatStore';
+import { removeAuthorFromRoom, pruneSeenMessagesAsync } from '@/lib/chatStore';
 
 export async function POST(req: NextRequest) {
   try {
@@ -8,6 +8,7 @@ export async function POST(req: NextRequest) {
 
     if (senderId) {
       removeAuthorFromRoom(roomId, senderId);
+      await pruneSeenMessagesAsync(roomId, senderId);
     }
 
     return NextResponse.json({ success: true });

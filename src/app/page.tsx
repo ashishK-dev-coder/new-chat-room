@@ -851,8 +851,16 @@ export default function WordChatApp() {
     setMessages([]);
     setIsUnlocked(false);
 
-    // 4. Notify server of unlocked: false so presence updates (does NOT clear server messages!)
+    // 4. Prune seen messages on server so they disappear (Snapchat style ephemeral seen wipe)
+    // Preserves unseen messages so recipient can still view them when they unlock
     const activeId = tabAuthorIdRef.current || tabAuthorId;
+    fetch('/api/chat/prune-seen', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomId, senderId: activeId }),
+    }).catch(() => {});
+
+    // 5. Notify server of unlocked: false so presence updates
     fetch(
       `/api/chat/sync?room=${encodeURIComponent(roomId)}&senderId=${encodeURIComponent(activeId)}&unlocked=false&_t=${Date.now()}`
     ).catch(() => {});
@@ -1351,6 +1359,10 @@ export default function WordChatApp() {
                 data.messageIds.includes(m.id) ? { ...m, status: 'seen' as const } : m
               )
             );
+          } else if (data.type === 'prune-seen' && Array.isArray(data.prunedIds)) {
+            // Ephemeral seen messages disappeared on panic/logout (Snapchat mode)
+            data.prunedIds.forEach((id: string) => markedSeenIdsRef.current.delete(id));
+            setMessages((prev) => prev.filter((m) => !data.prunedIds.includes(m.id)));
           } else if (data.type === 'snap-burned') {
             const burnedId = data.message?.id || data.messageId;
             setMessages((prev) =>
@@ -1907,19 +1919,7 @@ export default function WordChatApp() {
 
   const handleLockToggle = () => {
     if (isUnlocked) {
-      setIsUnlocked(false);
-      setMessages([]);
-      setIsPreviewActive(false);
-      setShowPreviewConfirm(false);
-      setIncomingPreviewInvite(null);
-      if (typeof window !== 'undefined') {
-        sessionStorage.removeItem(`word_unlocked_${roomId}`);
-        sessionStorage.removeItem('word_tab_password');
-      }
-      const activeId = tabAuthorIdRef.current || tabAuthorId;
-      fetch(
-        `/api/chat/sync?room=${encodeURIComponent(roomId)}&senderId=${encodeURIComponent(activeId)}&unlocked=false&_t=${Date.now()}`
-      ).catch(() => {});
+      handleLocalPanicWipe();
     } else {
       setShowPasswordModal(true);
     }

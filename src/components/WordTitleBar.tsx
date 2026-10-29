@@ -156,17 +156,17 @@ export const WordTitleBar: React.FC<WordTitleBarProps> = ({
             >
               <div className="flex -space-x-1.5">
                 <div
-                  className="w-5 h-5 rounded-full bg-[#0078d4] text-white text-[9px] font-bold flex items-center justify-center border border-white ring-1 ring-white/50"
-                  title="Collaborator (Self)"
+                  className="w-5 h-5 rounded-full bg-[#0078d4] text-white text-[10px] font-bold flex items-center justify-center border border-white ring-1 ring-white/50"
+                  title="Author 1"
                 >
-                  AK
+                  1
                 </div>
                 {displayCount > 1 && (
                   <div
-                    className="w-5 h-5 rounded-full bg-[#107c41] text-white text-[9px] font-bold flex items-center justify-center border border-white ring-1 ring-white/50"
-                    title="Collaborator (Online)"
+                    className="w-5 h-5 rounded-full bg-[#107c41] text-white text-[10px] font-bold flex items-center justify-center border border-white ring-1 ring-white/50"
+                    title="Author 2"
                   >
-                    RD
+                    2
                   </div>
                 )}
               </div>

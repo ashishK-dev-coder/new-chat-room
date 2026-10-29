@@ -7,6 +7,7 @@ import {
   getUnlockedAuthorCount,
   syncAuthorPresenceAsync,
   popAllSignalsAsync,
+  pruneSeenMessagesAsync,
 } from '@/lib/chatStore';
 
 export async function GET(req: NextRequest) {
@@ -19,6 +20,11 @@ export async function GET(req: NextRequest) {
 
     const room = getOrCreateRoom(roomId);
 
+    // If an author is reporting locked/logout, prune all messages that have already been seen
+    if (rawUnlocked === 'false') {
+      await pruneSeenMessagesAsync(roomId, senderId || undefined);
+    }
+
     // 1. Synchronize Author Presence across serverless Lambdas using Redis + Memory
     const presence = senderId
       ? await syncAuthorPresenceAsync(roomId, senderId, rawUnlocked === 'true')
@@ -28,7 +34,7 @@ export async function GET(req: NextRequest) {
           unlockedCount: getUnlockedAuthorCount(room),
         };
 
-    // 2. Fetch room messages
+    // 2. Fetch room messages (reflecting any pruned seen items)
     const messages = await getRoomMessagesAsync(roomId);
 
     // 3. Pop all pending WebRTC signals (offer, answer, candidate, preview-invite, preview-accept)

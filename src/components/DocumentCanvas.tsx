@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { CornerUpLeft, X, Clock, Check, CheckCheck, AlertCircle, Eye, Smile, Camera, Lock, Phone, PhoneCall, PhoneOff, Mic } from 'lucide-react';
+import { CornerUpLeft, X, Clock, Check, CheckCheck, AlertCircle, Eye, Smile, Camera, Lock, Phone, PhoneCall, PhoneOff, Mic, Copy } from 'lucide-react';
 import { ChatMessage, sortChatMessages } from '@/lib/chatStore';
 import { isPanicKeyEvent } from '@/lib/panicUtils';
 import { FontSettings } from './WordRibbon';
@@ -111,6 +111,33 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
     prefix?: string;
   } | null>(null);
   const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+
+  const handleCopyMessageText = async (e: React.MouseEvent, text: string, msgId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.opacity = '0';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      setCopiedMessageId(msgId);
+      setTimeout(() => {
+        setCopiedMessageId((prev) => (prev === msgId ? null : prev));
+      }, 1800);
+    } catch (err) {
+      console.warn('Failed to copy text:', err);
+    }
+  };
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -578,7 +605,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                                 ? 'text-[#34d399]'
                                 : 'text-[#107c41]'
                             }`}>
-                              • {clauseNum} [{isSelf ? 'AK (Self)' : 'RD (Reviewer)'}]:
+                              • {clauseNum} [Author {msg.senderId === 'author-2' ? '2' : '1'}{isSelf ? ' (Self)' : ''}]:
                             </span>
 
                             <div className="flex items-center space-x-1.5 shrink-0">
@@ -629,6 +656,28 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                                     </span>
                                   )}
                                 </div>
+                              )}
+
+                              {/* Copy Message Text Button (Available on every sent or received message) */}
+                              {msg.text && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleCopyMessageText(e, msg.text, msg.id)}
+                                  title={copiedMessageId === msg.id ? 'Copied to clipboard!' : 'Copy clause text'}
+                                  className={`opacity-50 hover:opacity-100 group-hover:opacity-100 transition-opacity p-0.5 rounded cursor-pointer shrink-0 ${
+                                    copiedMessageId === msg.id
+                                      ? 'text-emerald-500'
+                                      : darkMode
+                                      ? 'hover:bg-white/10 text-white/70 hover:text-[#4ba3f4]'
+                                      : 'hover:bg-black/5 text-[#64748b] hover:text-[#0078d4]'
+                                  }`}
+                                >
+                                  {copiedMessageId === msg.id ? (
+                                    <Check className="w-3 h-3 text-emerald-500 stroke-[2.5]" />
+                                  ) : (
+                                    <Copy className="w-3 h-3" />
+                                  )}
+                                </button>
                               )}
 
                               {/* Backward reply arrow to tag this message */}
@@ -916,7 +965,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
               >
                 <span className="inline-block w-1.5 h-3 bg-[#107c41] dark:bg-[#34d399] mr-0.5 animate-ping" />
                 <span className="font-semibold text-[8pt] text-[#107c41] dark:text-[#34d399] bg-[#107c41]/10 px-1 py-0.2 rounded font-mono">
-                  {currentUserId === 'author-2' ? 'AK |' : 'RD |'}
+                  {currentUserId === 'author-2' ? '1 |' : '2 |'}
                 </span>
                 <span className="italic text-[8.5pt]">Collaborator drafting amendment...</span>
               </div>
