@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getRoomMessages, authenticateAuthor, setAuthorUnlockedStatus } from '@/lib/chatStore';
+import { getRoomMessagesAsync, authenticateAuthor, setAuthorUnlockedStatus } from '@/lib/chatStore';
 
 export async function POST(req: NextRequest) {
   try {
@@ -19,11 +19,13 @@ export async function POST(req: NextRequest) {
       setAuthorUnlockedStatus(roomId, auth.authorId, true);
     }
 
+    const messages = await getRoomMessagesAsync(roomId);
+
     return NextResponse.json({
       success: true,
       authorId: auth.authorId,
       authorName: auth.authorName,
-      messages: getRoomMessages(roomId),
+      messages,
     });
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : 'Unknown error';

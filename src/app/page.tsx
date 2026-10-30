@@ -775,16 +775,16 @@ export default function WordChatApp() {
     }
   }, [roomId]);
 
-  // Sync messages to local session cache whenever messages change
+  // Sync messages to local session cache whenever messages change while unlocked
   useEffect(() => {
     try {
-      if (messages.length > 0) {
+      if (isUnlocked && messages.length > 0) {
         sessionStorage.setItem(`word_chat_msgs_${roomId}`, JSON.stringify(messages));
       }
     } catch {
       // ignore
     }
-  }, [messages, roomId]);
+  }, [messages, isUnlocked, roomId]);
 
   // Send WebRTC Signal to Peer Author
   const sendSignal = useCallback(
@@ -854,16 +854,25 @@ export default function WordChatApp() {
     // 4. Prune seen messages on server so they disappear (Snapchat style ephemeral seen wipe)
     // Preserves unseen messages so recipient can still view them when they unlock
     const activeId = tabAuthorIdRef.current || tabAuthorId;
-    fetch('/api/chat/prune-seen', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ roomId, senderId: activeId }),
-    }).catch(() => {});
+    const prunePayload = JSON.stringify({ roomId, senderId: activeId });
+    if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+      navigator.sendBeacon('/api/chat/prune-seen', new Blob([prunePayload], { type: 'application/json' }));
+    } else {
+      fetch('/api/chat/prune-seen', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: prunePayload,
+        keepalive: true,
+      }).catch(() => {});
+    }
 
     // 5. Notify server of unlocked: false so presence updates
-    fetch(
-      `/api/chat/sync?room=${encodeURIComponent(roomId)}&senderId=${encodeURIComponent(activeId)}&unlocked=false&_t=${Date.now()}`
-    ).catch(() => {});
+    const syncUrl = `/api/chat/sync?room=${encodeURIComponent(roomId)}&senderId=${encodeURIComponent(activeId)}&unlocked=false&_t=${Date.now()}`;
+    if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+      navigator.sendBeacon(syncUrl);
+    } else {
+      fetch(syncUrl, { keepalive: true }).catch(() => {});
+    }
   }, [roomId, tabAuthorId, sendSignal]);
 
   const handlePanicLock = handleLocalPanicWipe;
@@ -1362,7 +1371,11 @@ export default function WordChatApp() {
           } else if (data.type === 'prune-seen' && Array.isArray(data.prunedIds)) {
             // Ephemeral seen messages disappeared on panic/logout (Snapchat mode)
             data.prunedIds.forEach((id: string) => markedSeenIdsRef.current.delete(id));
-            setMessages((prev) => prev.filter((m) => !data.prunedIds.includes(m.id)));
+            // If author is currently unlocked and actively viewing document, DO NOT vanish messages while reading!
+            // Messages disappear only when this author cuts the page, logs out, or switches to another app.
+            if (!isUnlockedRef.current) {
+              setMessages((prev) => prev.filter((m) => !data.prunedIds.includes(m.id)));
+            }
           } else if (data.type === 'snap-burned') {
             const burnedId = data.message?.id || data.messageId;
             setMessages((prev) =>
@@ -1450,8 +1463,15 @@ export default function WordChatApp() {
       try {
         if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
           navigator.sendBeacon('/api/chat/leave', new Blob([payload], { type: 'application/json' }));
+          navigator.sendBeacon('/api/chat/prune-seen', new Blob([payload], { type: 'application/json' }));
         } else {
           fetch('/api/chat/leave', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: payload,
+            keepalive: true,
+          }).catch(() => {});
+          fetch('/api/chat/prune-seen', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: payload,

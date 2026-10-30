@@ -3,7 +3,13 @@ import { removeAuthorFromRoom, pruneSeenMessagesAsync } from '@/lib/chatStore';
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json().catch(() => ({}));
+    let body: any = {};
+    try {
+      const text = await req.text();
+      body = text ? JSON.parse(text) : {};
+    } catch {
+      body = await req.json().catch(() => ({}));
+    }
     const { roomId = 'default-room', senderId } = body;
 
     if (senderId) {
