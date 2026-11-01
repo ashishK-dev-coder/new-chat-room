@@ -195,6 +195,81 @@ export default function WordChatApp() {
   const [isInitiator, setIsInitiator] = useState<boolean>(false);
   const [incomingSignal, setIncomingSignal] = useState<WebRTCSignal | null>(null);
 
+  // Split-Screen Simultaneous Video & Chat States
+  const workspaceContainerRef = useRef<HTMLDivElement | null>(null);
+  const [videoSplitPercent, setVideoSplitPercent] = useState<number>(35); // 30% - 40% default 35%
+  const [videoPlacement, setVideoPlacement] = useState<'right' | 'left'>('right'); // 'right' | 'left'
+  const [videoLayoutOrientation, setVideoLayoutOrientation] = useState<'horizontal' | 'vertical'>('horizontal');
+  const [isMobilePortrait, setIsMobilePortrait] = useState<boolean>(false);
+  const [isFullScreenVideo, setIsFullScreenVideo] = useState<boolean>(false);
+  const [isDraggingSplitter, setIsDraggingSplitter] = useState<boolean>(false);
+
+  // Auto-detect mobile portrait screen for optimal vertical/horizontal split
+  useEffect(() => {
+    const handleResize = () => {
+      const isPortrait = window.innerWidth < 640 && window.innerHeight > window.innerWidth;
+      setIsMobilePortrait(isPortrait);
+      if (isPortrait) {
+        setVideoLayoutOrientation('vertical');
+      } else {
+        setVideoLayoutOrientation('horizontal');
+      }
+    };
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Pointer drag resizing handlers for the split divider
+  const handleSplitterPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {}
+    setIsDraggingSplitter(true);
+  }, []);
+
+  const handleSplitterPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!workspaceContainerRef.current) return;
+    const rect = workspaceContainerRef.current.getBoundingClientRect();
+    const isVertical = isMobilePortrait && videoLayoutOrientation === 'vertical';
+
+    if (isVertical) {
+      const relativeY = e.clientY - rect.top;
+      let pct: number;
+      if (videoPlacement === 'left') {
+        // Video is on TOP
+        pct = (relativeY / rect.height) * 100;
+      } else {
+        // Video is on BOTTOM
+        pct = ((rect.bottom - e.clientY) / rect.height) * 100;
+      }
+      const clamped = Math.round(Math.max(25, Math.min(55, pct)));
+      setVideoSplitPercent(clamped);
+    } else {
+      let pct: number;
+      if (videoPlacement === 'left') {
+        // Video is on LEFT
+        const relativeX = e.clientX - rect.left;
+        pct = (relativeX / rect.width) * 100;
+      } else {
+        // Video is on RIGHT
+        const relativeX = rect.right - e.clientX;
+        pct = (relativeX / rect.width) * 100;
+      }
+      // Clamped between 25% and 50% (Chat stays at 75% to 50%)
+      const clamped = Math.round(Math.max(25, Math.min(50, pct)));
+      setVideoSplitPercent(clamped);
+    }
+  }, [isMobilePortrait, videoLayoutOrientation, videoPlacement]);
+
+  const handleSplitterPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {}
+    setIsDraggingSplitter(false);
+  }, []);
+
   // Voice Call States (Smooth WebRTC 48kHz Two-Way Audio Call)
   const [showVoiceCallConfirm, setShowVoiceCallConfirm] = useState<boolean>(false);
   const [incomingVoiceInvite, setIncomingVoiceInvite] = useState<{ from: string } | null>(null);
@@ -826,6 +901,8 @@ export default function WordChatApp() {
     setIsPreviewActive(false);
     setShowPreviewConfirm(false);
     setIncomingPreviewInvite(null);
+    setIsFullScreenVideo(false);
+    setIsDraggingSplitter(false);
     setIsVoiceCallActive(false);
     setShowVoiceCallConfirm(false);
     setIncomingVoiceInvite(null);
@@ -894,6 +971,8 @@ export default function WordChatApp() {
     setIsPreviewActive(false);
     setShowPreviewConfirm(false);
     setIncomingPreviewInvite(null);
+    setIsFullScreenVideo(false);
+    setIsDraggingSplitter(false);
     setIsVoiceCallActive(false);
     setShowVoiceCallConfirm(false);
     setIncomingVoiceInvite(null);
@@ -2038,68 +2117,170 @@ export default function WordChatApp() {
       {/* 4. MS Word Ruler */}
       <WordRuler darkMode={darkMode} />
 
-      {/* 5. Document Canvas (A4 sheet, 4 messages max, inline enter typing) */}
-      <div className="flex-1 flex flex-col h-full min-h-0 w-full min-w-0 overflow-auto">
-        <DocumentCanvas
-          messages={messages}
-          currentUserId={tabAuthorId}
-          isUnlocked={isUnlocked}
-          fontSettings={fontSettings}
-          stealthMode={stealthMode}
-          onSendMessage={handleSendMessage}
-          onRequireUnlock={() => {
-            requestNotificationPermission();
-            setShowPasswordModal(true);
+      {/* 5. Main Workspace: Chat (DocumentCanvas) & Live Video Call Split Layout */}
+      <div
+        ref={workspaceContainerRef}
+        className={`flex-1 flex h-full min-h-0 w-full min-w-0 overflow-hidden relative ${
+          isMobilePortrait && videoLayoutOrientation === 'vertical' ? 'flex-col' : 'flex-row'
+        }`}
+      >
+        {/* Chat / Document Canvas: taking 60% - 70% width */}
+        <div
+          className="flex flex-col h-full min-h-0 min-w-0 overflow-hidden transition-[width,height] duration-75"
+          style={{
+            order: videoPlacement === 'left' ? 3 : 1,
+            width:
+              isPreviewActive && !isFullScreenVideo && !(isMobilePortrait && videoLayoutOrientation === 'vertical')
+                ? `${100 - videoSplitPercent}%`
+                : '100%',
+            height:
+              isPreviewActive && !isFullScreenVideo && isMobilePortrait && videoLayoutOrientation === 'vertical'
+                ? `${100 - videoSplitPercent}%`
+                : '100%',
+            flex:
+              isPreviewActive && !isFullScreenVideo
+                ? `0 0 ${100 - videoSplitPercent}%`
+                : '1 1 100%',
           }}
-          onPanicClear={handleLocalPanicWipe}
-          onPanicWipe={handleLocalPanicWipe}
-          peerTyping={peerTyping}
-          participantCount={participantCount}
-          bothUnlocked={bothUnlocked}
-          onTyping={handleSendTyping}
-          onOpenPreview={() => {
-            if (participantCount >= 2 && bothUnlocked) {
-              setShowPreviewConfirm(true);
-            }
-          }}
-          incomingPreviewInvite={incomingPreviewInvite}
-          onAcceptPreview={() => {
-            setIncomingPreviewInvite(null);
-            setIsInitiator(false);
-            setIsPreviewActive(true);
-          }}
-          onDeclinePreview={() => {
-            sendSignal('preview-decline');
-            setIncomingPreviewInvite(null);
-          }}
-          onOpenVoiceCall={() => {
-            if (participantCount >= 2 && bothUnlocked) {
-              setShowVoiceCallConfirm(true);
-            }
-          }}
-          incomingVoiceInvite={incomingVoiceInvite}
-          onAcceptVoiceCall={() => {
-            setIncomingVoiceInvite(null);
-            setIsVoiceCallInitiator(false);
-            setIsVoiceCallActive(true);
-          }}
-          onDeclineVoiceCall={() => {
-            sendSignal('voice-decline');
-            setIncomingVoiceInvite(null);
-          }}
-          onOpenSnapCapture={() => {
-            if (isUnlocked) {
-              setIsSnapCaptureOpen(true);
-            } else {
+        >
+          <DocumentCanvas
+            messages={messages}
+            currentUserId={tabAuthorId}
+            isUnlocked={isUnlocked}
+            fontSettings={fontSettings}
+            stealthMode={stealthMode}
+            onSendMessage={handleSendMessage}
+            onRequireUnlock={() => {
+              requestNotificationPermission();
               setShowPasswordModal(true);
-            }
-          }}
-          onOpenSnapViewer={(msg) => {
-            setActiveSnapToView(msg);
-          }}
-          darkMode={darkMode}
-          zoomLevel={zoomLevel}
-        />
+            }}
+            onPanicClear={handleLocalPanicWipe}
+            onPanicWipe={handleLocalPanicWipe}
+            peerTyping={peerTyping}
+            participantCount={participantCount}
+            bothUnlocked={bothUnlocked}
+            onTyping={handleSendTyping}
+            onOpenPreview={() => {
+              if (participantCount >= 2 && bothUnlocked) {
+                setShowPreviewConfirm(true);
+              }
+            }}
+            incomingPreviewInvite={incomingPreviewInvite}
+            onAcceptPreview={() => {
+              setIncomingPreviewInvite(null);
+              setIsInitiator(false);
+              setIsPreviewActive(true);
+            }}
+            onDeclinePreview={() => {
+              sendSignal('preview-decline');
+              setIncomingPreviewInvite(null);
+            }}
+            onOpenVoiceCall={() => {
+              if (participantCount >= 2 && bothUnlocked) {
+                setShowVoiceCallConfirm(true);
+              }
+            }}
+            incomingVoiceInvite={incomingVoiceInvite}
+            onAcceptVoiceCall={() => {
+              setIncomingVoiceInvite(null);
+              setIsVoiceCallInitiator(false);
+              setIsVoiceCallActive(true);
+            }}
+            onDeclineVoiceCall={() => {
+              sendSignal('voice-decline');
+              setIncomingVoiceInvite(null);
+            }}
+            onOpenSnapCapture={() => {
+              if (isUnlocked) {
+                setIsSnapCaptureOpen(true);
+              } else {
+                setShowPasswordModal(true);
+              }
+            }}
+            onOpenSnapViewer={(msg) => {
+              setActiveSnapToView(msg);
+            }}
+            darkMode={darkMode}
+            zoomLevel={zoomLevel}
+          />
+        </div>
+
+        {/* Draggable Resizer Divider Bar (between Chat and Video) */}
+        {isPreviewActive && !isFullScreenVideo && (
+          <div
+            onPointerDown={handleSplitterPointerDown}
+            onPointerMove={handleSplitterPointerMove}
+            onPointerUp={handleSplitterPointerUp}
+            onPointerCancel={handleSplitterPointerUp}
+            onDoubleClick={() => setVideoSplitPercent(35)}
+            title={`Drag to resize video frame (Chat: ${100 - videoSplitPercent}% | Video: ${videoSplitPercent}%) • Double click to reset to 35%`}
+            style={{ order: 2 }}
+            className={`shrink-0 z-30 transition-colors select-none flex items-center justify-center group ${
+              isMobilePortrait && videoLayoutOrientation === 'vertical'
+                ? 'w-full h-2 cursor-row-resize border-y border-[#c8c6c4] dark:border-[#3e3e42] bg-[#e1dfdd] hover:bg-[#185abd] dark:bg-[#2b2b2b] dark:hover:bg-[#0078d4]'
+                : 'w-2 h-full cursor-col-resize border-x border-[#c8c6c4] dark:border-[#3e3e42] bg-[#e1dfdd] hover:bg-[#185abd] dark:bg-[#2b2b2b] dark:hover:bg-[#0078d4]'
+            } ${isDraggingSplitter ? 'bg-[#185abd] dark:bg-[#0078d4]' : ''}`}
+          >
+            {/* Grip Handle Indicator */}
+            <div
+              className={`rounded-full bg-[#8a8886] group-hover:bg-white transition-colors ${
+                isMobilePortrait && videoLayoutOrientation === 'vertical'
+                  ? 'w-8 h-1'
+                  : 'w-1 h-8'
+              }`}
+            />
+          </div>
+        )}
+
+        {/* Live Video Preview Split Panel / Modal (WebRTC P2P Visual Stream, strictly muted) */}
+        {isPreviewActive && (
+          <div
+            style={{
+              order: videoPlacement === 'left' ? 1 : 3,
+              width:
+                !isFullScreenVideo && !(isMobilePortrait && videoLayoutOrientation === 'vertical')
+                  ? `${videoSplitPercent}%`
+                  : '100%',
+              height:
+                !isFullScreenVideo && isMobilePortrait && videoLayoutOrientation === 'vertical'
+                  ? `${videoSplitPercent}%`
+                  : '100%',
+              flex: !isFullScreenVideo
+                ? `0 0 ${videoSplitPercent}%`
+                : '1 1 100%',
+            }}
+            className={isFullScreenVideo ? 'contents' : 'h-full min-w-0 min-h-0 flex flex-col'}
+          >
+            <VideoPreviewModal
+              isOpen={isPreviewActive}
+              isInitiator={isInitiator}
+              currentAuthorId={tabAuthorId === 'author-2' ? 'author-2' : 'author-1'}
+              peerAuthorName={tabAuthorId === 'author-2' ? 'Author 1' : 'Author 2'}
+              roomId={roomId}
+              onClose={() => {
+                setIsPreviewActive(false);
+                setIsInitiator(false);
+                setIsFullScreenVideo(false);
+              }}
+              sendSignal={sendSignal}
+              registerSignalListener={registerSignalListener}
+              onPanicCutAndWipe={handleLocalPanicWipe}
+              peerTyping={peerTyping}
+              darkMode={darkMode}
+              dockSide={videoPlacement}
+              onToggleDockSide={() => setVideoPlacement((prev) => (prev === 'right' ? 'left' : 'right'))}
+              splitPercent={videoSplitPercent}
+              onSetSplitPercent={setVideoSplitPercent}
+              isMobilePortrait={isMobilePortrait}
+              layoutOrientation={videoLayoutOrientation}
+              onToggleLayoutOrientation={() =>
+                setVideoLayoutOrientation((prev) => (prev === 'vertical' ? 'horizontal' : 'vertical'))
+              }
+              isFullScreen={isFullScreenVideo}
+              onToggleFullScreen={() => setIsFullScreenVideo((prev) => !prev)}
+            />
+          </div>
+        )}
       </div>
 
       {/* 6. MS Word Status Bar */}
@@ -2404,23 +2585,17 @@ export default function WordChatApp() {
         </div>
       )}
 
-      {/* 3. Live Video Preview Modal (WebRTC P2P Visual Stream, strictly muted) */}
-      <VideoPreviewModal
-        isOpen={isPreviewActive}
-        isInitiator={isInitiator}
-        currentAuthorId={tabAuthorId === 'author-2' ? 'author-2' : 'author-1'}
-        peerAuthorName={tabAuthorId === 'author-2' ? 'Author 1' : 'Author 2'}
-        roomId={roomId}
-        onClose={() => {
-          setIsPreviewActive(false);
-          setIsInitiator(false);
-        }}
-        sendSignal={sendSignal}
-        registerSignalListener={registerSignalListener}
-        onPanicCutAndWipe={handleLocalPanicWipe}
-        peerTyping={peerTyping}
-        darkMode={darkMode}
-      />
+      {/* Active Splitter Dragging Cursor Overlay */}
+      {isDraggingSplitter && (
+        <div
+          className={`fixed inset-0 z-[100] select-none ${
+            isMobilePortrait && videoLayoutOrientation === 'vertical'
+              ? 'cursor-row-resize'
+              : 'cursor-col-resize'
+          }`}
+          style={{ userSelect: 'none', WebkitUserSelect: 'none' }}
+        />
+      )}
 
       {/* 4. Live Voice Call Modal (WebRTC P2P 48kHz Two-Way Audio) */}
       <VoiceCallModal

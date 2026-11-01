@@ -13,6 +13,12 @@ import {
   AlertTriangle,
   FlipHorizontal,
   SwitchCamera,
+  ArrowLeftRight,
+  ArrowUpDown,
+  Plus,
+  Minus,
+  Columns,
+  Rows,
 } from 'lucide-react';
 import { WebRTCSignal } from '@/lib/chatStore';
 import { isPanicKeyEvent } from '@/lib/panicUtils';
@@ -29,6 +35,16 @@ interface VideoPreviewModalProps {
   onPanicCutAndWipe?: () => void;
   peerTyping?: boolean;
   darkMode?: boolean;
+  // Docked split-screen controls
+  dockSide?: 'left' | 'right';
+  onToggleDockSide?: () => void;
+  splitPercent?: number; // 25 to 50
+  onSetSplitPercent?: (pct: number) => void;
+  isMobilePortrait?: boolean;
+  layoutOrientation?: 'horizontal' | 'vertical';
+  onToggleLayoutOrientation?: () => void;
+  isFullScreen?: boolean;
+  onToggleFullScreen?: () => void;
 }
 
 const RTC_CONFIG: RTCConfiguration = {
@@ -55,6 +71,15 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
   onPanicCutAndWipe,
   peerTyping = false,
   darkMode = false,
+  dockSide = 'right',
+  onToggleDockSide,
+  splitPercent = 35,
+  onSetSplitPercent,
+  isMobilePortrait = false,
+  layoutOrientation = 'horizontal',
+  onToggleLayoutOrientation,
+  isFullScreen: isFullScreenProp,
+  onToggleFullScreen,
 }) => {
   const [status, setStatusState] = useState<'requesting' | 'connecting' | 'connected' | 'ended' | 'error'>(
     isInitiator ? 'requesting' : 'connecting'
@@ -69,7 +94,16 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [isLocalMirrored, setIsLocalMirrored] = useState<boolean>(true); // Front camera starts mirrored, back camera starts unmirrored
   const [isRemoteMirrored, setIsRemoteMirrored] = useState<boolean>(false);
-  const [isFullScreen, setIsFullScreen] = useState(false);
+  const [internalFullScreen, setInternalFullScreen] = useState<boolean>(false);
+
+  const isFullScreen = typeof isFullScreenProp === 'boolean' ? isFullScreenProp : internalFullScreen;
+  const toggleFullScreen = useCallback(() => {
+    if (onToggleFullScreen) {
+      onToggleFullScreen();
+    } else {
+      setInternalFullScreen((prev) => !prev);
+    }
+  }, [onToggleFullScreen]);
 
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -595,52 +629,166 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-[90] flex items-center justify-center bg-black/75 backdrop-blur-[3px] p-2 sm:p-4 select-none animate-in fade-in duration-200"
+      className={
+        isFullScreen
+          ? 'fixed inset-0 z-[90] flex items-center justify-center bg-black/80 backdrop-blur-[2px] p-2 sm:p-4 select-none animate-in fade-in duration-200'
+          : 'w-full h-full flex flex-col bg-[#1e1e1e] text-white select-none overflow-hidden relative'
+      }
       onDoubleClick={(e) => {
-        // Double-click outside modal instantly closes
-        if (e.target === e.currentTarget) handleEndPreview();
+        // Double-click outside modal instantly closes in fullscreen mode
+        if (isFullScreen && e.target === e.currentTarget) handleEndPreview();
       }}
     >
-      {/* Centered mobile-fit screen frame on desktop */}
+      {/* Inner frame: centered modal card when full screen, direct panel when docked */}
       <div
-        className={`w-full ${
+        className={
           isFullScreen
-            ? 'max-w-md h-[95vh]'
-            : 'max-w-[340px] sm:max-w-[365px] h-[580px] sm:h-[620px] max-h-[88vh]'
-        } bg-[#1e1e1e] text-white rounded-2xl shadow-2xl border border-[#3e3e42] flex flex-col overflow-hidden transition-all duration-200`}
+            ? 'w-full max-w-4xl h-[92vh] max-h-[92vh] bg-[#1e1e1e] text-white rounded-2xl shadow-2xl border border-[#3e3e42] flex flex-col overflow-hidden transition-all duration-200'
+            : 'w-full h-full flex flex-col overflow-hidden bg-[#1e1e1e]'
+        }
       >
         {/* Office Title Bar */}
-        <div className="bg-[#185abd] text-white px-3 py-2 flex items-center justify-between shrink-0 shadow-sm">
-          <div className="flex items-center space-x-2 min-w-0">
-            <div className="w-5 h-5 bg-white/20 rounded flex items-center justify-center font-bold text-xs">
+        <div className="bg-[#185abd] text-white px-2.5 sm:px-3 py-1.5 sm:py-2 flex items-center justify-between shrink-0 shadow-sm gap-1 select-none">
+          {/* Left: Office Word Logo & Stealth Title */}
+          <div className="flex items-center space-x-2 min-w-0 shrink">
+            <div className="w-5 h-5 bg-white/20 rounded flex items-center justify-center font-bold text-xs shrink-0">
               W
             </div>
             <div className="flex items-center space-x-1.5 truncate">
               <span className="font-semibold text-xs truncate">
-                Office Document Optical Scanner &bull; Print Preview
+                Optical Scanner
               </span>
+              <span
+                className={`w-2 h-2 rounded-full shrink-0 ${
+                  status === 'connected' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+                }`}
+                title={status === 'connected' ? 'Connected (Live Feed)' : status}
+              />
             </div>
           </div>
 
-          <div className="flex items-center space-x-1.5 shrink-0">
+          {/* Center: Frame Size Controls & Placement Controls (when docked) */}
+          {!isFullScreen && (
+            <div className="flex items-center space-x-1 shrink-0 text-white/90">
+              {/* Decrease frame size (-) */}
+              <button
+                type="button"
+                onClick={() => onSetSplitPercent && splitPercent && onSetSplitPercent(Math.max(25, splitPercent - 5))}
+                disabled={splitPercent !== undefined && splitPercent <= 25}
+                title="Decrease Video Frame Size (-5%)"
+                className="w-6 h-6 flex items-center justify-center bg-white/10 hover:bg-white/25 active:bg-white/35 disabled:opacity-40 disabled:cursor-not-allowed rounded text-xs font-bold cursor-pointer transition"
+              >
+                <Minus className="w-3 h-3" />
+              </button>
+
+              {/* Current size indicator */}
+              <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 bg-black/30 rounded border border-white/20 min-w-[34px] text-center">
+                {splitPercent || 35}%
+              </span>
+
+              {/* Increase frame size (+) */}
+              <button
+                type="button"
+                onClick={() => onSetSplitPercent && splitPercent && onSetSplitPercent(Math.min(50, splitPercent + 5))}
+                disabled={splitPercent !== undefined && splitPercent >= 50}
+                title="Increase Video Frame Size (+5%)"
+                className="w-6 h-6 flex items-center justify-center bg-white/10 hover:bg-white/25 active:bg-white/35 disabled:opacity-40 disabled:cursor-not-allowed rounded text-xs font-bold cursor-pointer transition"
+              >
+                <Plus className="w-3 h-3" />
+              </button>
+
+              {/* Quick preset frame size buttons (shown when there's room on desktop) */}
+              <div className="hidden xl:flex items-center space-x-0.5 ml-1">
+                {[30, 35, 40, 45].map((pct) => (
+                  <button
+                    key={pct}
+                    type="button"
+                    onClick={() => onSetSplitPercent?.(pct)}
+                    title={`Set Frame Size to ${pct}% (Chat ${100 - pct}%)`}
+                    className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono cursor-pointer transition ${
+                      splitPercent === pct
+                        ? 'bg-white text-[#185abd] font-bold shadow-xs'
+                        : 'bg-white/10 hover:bg-white/20 text-white/90'
+                    }`}
+                  >
+                    {pct}%
+                  </button>
+                ))}
+              </div>
+
+              {/* Placement Swap Button: Left <-> Right or Top <-> Bottom */}
+              {onToggleDockSide && (
+                <button
+                  type="button"
+                  onClick={onToggleDockSide}
+                  title={
+                    isMobilePortrait && layoutOrientation === 'vertical'
+                      ? `Swap Position (Current: ${dockSide === 'left' ? 'Top' : 'Bottom'})`
+                      : `Swap Placement (Current: ${dockSide === 'left' ? 'Left' : 'Right'} side)`
+                  }
+                  className="ml-1 px-1.5 py-1 bg-white/15 hover:bg-white/30 active:bg-white/40 rounded text-[10px] font-medium flex items-center space-x-1 cursor-pointer transition border border-white/20"
+                >
+                  {isMobilePortrait && layoutOrientation === 'vertical' ? (
+                    <ArrowUpDown className="w-3 h-3" />
+                  ) : (
+                    <ArrowLeftRight className="w-3 h-3" />
+                  )}
+                  <span className="hidden sm:inline text-[10px]">
+                    {dockSide === 'left' ? 'To Right' : 'To Left'}
+                  </span>
+                </button>
+              )}
+
+              {/* On Mobile Portrait: Orientation toggle */}
+              {isMobilePortrait && onToggleLayoutOrientation && (
+                <button
+                  type="button"
+                  onClick={onToggleLayoutOrientation}
+                  title={layoutOrientation === 'vertical' ? 'Switch to Side-by-Side' : 'Switch to Stacked (Top/Bottom)'}
+                  className="px-1.5 py-1 bg-white/15 hover:bg-white/30 rounded text-[10px] cursor-pointer transition"
+                >
+                  {layoutOrientation === 'vertical' ? (
+                    <Columns className="w-3 h-3" />
+                  ) : (
+                    <Rows className="w-3 h-3" />
+                  )}
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Right: Window Controls */}
+          <div className="flex items-center space-x-1 shrink-0">
+            {/* Reset Scanner (Emergency Panic Wipe) */}
             <button
+              type="button"
               onClick={handleEndAll}
-              title="Reset Scanner, Discard Cache & Lock Document"
-              className="px-2 py-0.5 bg-red-600/90 hover:bg-red-700 active:bg-red-800 text-white rounded text-[11px] font-bold flex items-center space-x-1 transition shadow-xs cursor-pointer border border-red-400/40"
+              title="Reset Scanner, Discard Cache & Lock Document Immediately"
+              className="px-1.5 sm:px-2 py-0.5 bg-red-600/90 hover:bg-red-700 active:bg-red-800 text-white rounded text-[10px] sm:text-[11px] font-bold flex items-center space-x-1 transition shadow-xs cursor-pointer border border-red-400/40"
             >
               <AlertTriangle className="w-3 h-3" />
-              <span>Reset Scanner</span>
+              <span className="hidden sm:inline">Reset Scanner</span>
             </button>
+
+            {/* Fullscreen / Dock toggle */}
             <button
-              onClick={() => setIsFullScreen((prev) => !prev)}
-              title={isFullScreen ? 'Exit full screen' : 'Full screen'}
-              className="p-1 hover:bg-white/20 rounded transition text-white/90 cursor-pointer hidden sm:block"
+              type="button"
+              onClick={toggleFullScreen}
+              title={isFullScreen ? 'Return to Split Screen Alongside Chat' : 'Expand to Full Screen'}
+              className="p-1 hover:bg-white/20 rounded transition text-white/90 cursor-pointer"
             >
-              {isFullScreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+              {isFullScreen ? (
+                <Minimize2 className="w-3.5 h-3.5" />
+              ) : (
+                <Maximize2 className="w-3.5 h-3.5" />
+              )}
             </button>
+
+            {/* End / Close preview */}
             <button
+              type="button"
               onClick={handleEndPreview}
-              title="Close Scanner (Esc)"
+              title="Close Scanner / End Call (Esc)"
               className="p-1 hover:bg-red-600 rounded transition text-white cursor-pointer"
             >
               <X className="w-4 h-4" />
@@ -649,7 +797,7 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
         </div>
 
         {/* Video Canvas Container */}
-        <div className="relative flex-1 bg-black min-h-[300px] sm:min-h-[380px] flex items-center justify-center overflow-hidden">
+        <div className="relative flex-1 bg-black min-h-[200px] flex items-center justify-center overflow-hidden">
           {/* Main Remote Video feed (The other author) */}
           <video
             ref={remoteVideoRef}
@@ -665,9 +813,9 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
 
           {/* Fallback / Loading Status Overlay */}
           {status !== 'connected' && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-white/90 p-4 text-center space-y-3 z-10 bg-black/80">
-              <div className="w-12 h-12 rounded-full bg-[#185abd]/30 border border-[#185abd] flex items-center justify-center text-blue-300 animate-pulse">
-                <Eye className="w-6 h-6" />
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-white/90 p-3 sm:p-4 text-center space-y-2 sm:space-y-3 z-10 bg-black/80">
+              <div className="w-10 sm:w-12 h-10 sm:h-12 rounded-full bg-[#185abd]/30 border border-[#185abd] flex items-center justify-center text-blue-300 animate-pulse">
+                <Eye className="w-5 sm:w-6 h-5 sm:h-6" />
               </div>
               <div className="space-y-1">
                 <p className="text-xs sm:text-sm font-semibold tracking-wide">
@@ -679,14 +827,14 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
                     ? errorMessage || 'Optical scanner error'
                     : 'Scanner session closed'}
                 </p>
-                <p className="text-[11px] text-white/60">
+                <p className="text-[10px] sm:text-[11px] text-white/60">
                   Optical document inspection stream &bull; Muted &bull; Secure peer-to-peer
                 </p>
               </div>
 
               {status === 'requesting' && (
-                <div className="pt-2">
-                  <span className="text-[10px] bg-white/10 px-2 py-1 rounded text-white/80 animate-pulse">
+                <div className="pt-1">
+                  <span className="text-[9.5px] sm:text-[10px] bg-white/10 px-2 py-1 rounded text-white/80 animate-pulse">
                     Scan request sent to collaborator
                   </span>
                 </div>
@@ -695,7 +843,7 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
           )}
 
           {/* Picture-in-Picture Local Video (Self) in Corner */}
-          <div className="absolute top-3 right-3 w-20 sm:w-28 h-28 sm:h-38 rounded-xl overflow-hidden border border-white/30 shadow-lg z-20 bg-black/80 group">
+          <div className="absolute top-2.5 right-2.5 w-20 sm:w-28 h-26 sm:h-36 rounded-xl overflow-hidden border border-white/30 shadow-lg z-20 bg-black/80 group">
             <video
               ref={localVideoRef}
               autoPlay
@@ -708,6 +856,7 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
             {/* Quick mirror toggle button in PiP corner */}
             <div className="absolute top-1 right-1 opacity-90 sm:opacity-0 group-hover:opacity-100 transition-opacity">
               <button
+                type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   setIsLocalMirrored((prev) => !prev);
@@ -727,13 +876,13 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
           </div>
 
           {/* Top Left Stealth Badge */}
-          <div className="absolute top-3 left-3 flex items-center space-x-1.5 bg-black/60 backdrop-blur-xs text-white/90 px-2 py-1 rounded text-[10px] z-20">
+          <div className="absolute top-2.5 left-2.5 flex items-center space-x-1.5 bg-black/60 backdrop-blur-xs text-white/90 px-2 py-0.5 sm:py-1 rounded text-[9.5px] sm:text-[10px] z-20">
             <span
               className={`w-2 h-2 rounded-full ${
                 status === 'connected' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
               }`}
             />
-            <span className="font-medium">
+            <span className="font-medium truncate max-w-[120px] sm:max-w-none">
               {status === 'connected' ? 'Optical Feed (Active)' : 'Standby'}
             </span>
             <span className="text-white/50 text-[9px] border-l border-white/20 pl-1.5">Muted</span>
@@ -741,7 +890,7 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
 
           {/* Peer Drafting Presence Flag Overlay */}
           {peerTyping && (
-            <div className="absolute bottom-3 left-3 flex items-center space-x-2 bg-black/85 backdrop-blur-xs text-white/95 px-2.5 py-1 rounded-full text-[10px] font-medium z-20 border border-emerald-500/50 shadow-lg animate-in fade-in duration-150">
+            <div className="absolute bottom-2.5 left-2.5 flex items-center space-x-2 bg-black/85 backdrop-blur-xs text-white/95 px-2.5 py-1 rounded-full text-[9.5px] sm:text-[10px] font-medium z-20 border border-emerald-500/50 shadow-lg animate-in fade-in duration-150">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
               <span className="italic">Collaborator drafting revision...</span>
             </div>
@@ -750,65 +899,69 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
 
         {/* Office Footer Control Toolbar */}
         <div
-          className={`px-4 py-2.5 flex items-center justify-between border-t text-xs select-none ${
+          className={`px-2.5 sm:px-4 py-1.5 sm:py-2 flex items-center justify-between border-t text-xs select-none shrink-0 ${
             darkMode ? 'bg-[#2b2b2b] border-[#3e3e42] text-white/80' : 'bg-[#f3f2f1] border-[#c8c6c4] text-[#323130]'
           }`}
         >
-          <div className="flex items-center space-x-2 text-[11px] text-[#605e5c] dark:text-[#a19f9d]">
-            <Shield className="w-3.5 h-3.5 text-emerald-600" />
-            <span className="hidden sm:inline">Normal Quality P2P Stream &bull; Esc to close</span>
+          <div className="flex items-center space-x-1.5 text-[10px] sm:text-[11px] text-[#605e5c] dark:text-[#a19f9d] min-w-0 truncate">
+            <Shield className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+            <span className="truncate hidden sm:inline">Encrypted P2P Stream &bull; Esc to close</span>
           </div>
 
-          <div className="flex items-center space-x-1.5 sm:space-x-2">
+          <div className="flex items-center space-x-1 sm:space-x-1.5 shrink-0">
             {/* Camera switch for mobile / multi-camera devices */}
             <button
+              type="button"
               onClick={toggleFacingMode}
               title={facingMode === 'user' ? 'Switch to Back Camera (Normal orientation)' : 'Switch to Front Camera'}
-              className="px-2 py-1.5 bg-black/5 hover:bg-black/10 dark:bg-white/5 dark:hover:bg-white/10 rounded transition text-[#605e5c] dark:text-white/80 flex items-center space-x-1 cursor-pointer"
+              className="px-2 py-1 bg-black/5 hover:bg-black/10 dark:bg-white/5 dark:hover:bg-white/10 rounded transition text-[#605e5c] dark:text-white/80 flex items-center space-x-1 cursor-pointer text-[10.5px]"
             >
               <SwitchCamera className="w-3.5 h-3.5" />
-              <span className="text-[11px] font-medium hidden sm:inline">
+              <span className="hidden sm:inline font-medium">
                 {facingMode === 'user' ? 'Front' : 'Back'}
               </span>
             </button>
 
             {/* Toggle Mirror for Local Camera */}
             <button
+              type="button"
               onClick={() => setIsLocalMirrored((prev) => !prev)}
               title={isLocalMirrored ? 'Disable Mirroring (Normal View)' : 'Enable Mirroring'}
-              className={`px-2 py-1.5 rounded transition flex items-center space-x-1 cursor-pointer ${
+              className={`px-2 py-1 rounded transition flex items-center space-x-1 cursor-pointer text-[10.5px] ${
                 isLocalMirrored
                   ? 'bg-blue-600/15 text-blue-600 dark:text-blue-400 border border-blue-500/30'
                   : 'bg-black/5 hover:bg-black/10 dark:bg-white/5 dark:hover:bg-white/10 text-[#605e5c] dark:text-white/80'
               }`}
             >
               <FlipHorizontal className="w-3.5 h-3.5" />
-              <span className="text-[11px] font-medium hidden sm:inline">
+              <span className="hidden sm:inline font-medium">
                 {isLocalMirrored ? 'Mirror' : 'Normal'}
               </span>
             </button>
 
-            {/* Flip Remote Video (Helpful when peer shows a document or text) */}
+            {/* Flip Remote Video */}
             {status === 'connected' && (
               <button
+                type="button"
                 onClick={() => setIsRemoteMirrored((prev) => !prev)}
                 title="Flip peer video horizontally (useful to read paper or whiteboard)"
-                className={`px-2 py-1.5 rounded transition flex items-center space-x-1 cursor-pointer ${
+                className={`px-2 py-1 rounded transition flex items-center space-x-1 cursor-pointer text-[10.5px] ${
                   isRemoteMirrored
                     ? 'bg-amber-600/20 text-amber-700 dark:text-amber-400 border border-amber-500/40'
                     : 'bg-black/5 hover:bg-black/10 dark:bg-white/5 dark:hover:bg-white/10 text-[#605e5c] dark:text-white/80'
                 }`}
               >
                 <FlipHorizontal className="w-3.5 h-3.5 rotate-180" />
-                <span className="text-[11px] font-medium hidden md:inline">Flip Peer</span>
+                <span className="hidden md:inline font-medium">Flip Peer</span>
               </button>
             )}
 
             {/* End Call Only Button */}
             <button
+              type="button"
               onClick={handleEndPreview}
-              title="End visual preview only (keep messages)"
-              className="px-2.5 py-1.5 bg-neutral-600 hover:bg-neutral-700 text-white rounded text-xs font-medium flex items-center space-x-1 shadow-xs transition-colors cursor-pointer"
+              title="End visual preview only (keep messages & chat active)"
+              className="px-2.5 py-1 bg-neutral-600 hover:bg-neutral-700 text-white rounded text-[11px] font-medium flex items-center space-x-1 shadow-xs transition-colors cursor-pointer"
             >
               <PhoneOff className="w-3.5 h-3.5" />
               <span>End Call</span>
@@ -816,9 +969,10 @@ export const VideoPreviewModal: React.FC<VideoPreviewModalProps> = ({
 
             {/* End All: Cut video, wipe all messages & logout */}
             <button
+              type="button"
               onClick={handleEndAll}
               title="End All: Cut Video, Wipe All Messages, & Logout Immediately"
-              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white rounded text-xs font-bold flex items-center space-x-1.5 shadow-md transition-all cursor-pointer border border-red-500/50 animate-pulse hover:animate-none"
+              className="px-2.5 py-1 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white rounded text-[11px] font-bold flex items-center space-x-1 shadow-md transition-all cursor-pointer border border-red-500/50"
             >
               <AlertTriangle className="w-3.5 h-3.5 text-white" />
               <span>End All</span>
