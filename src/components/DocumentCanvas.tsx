@@ -873,8 +873,8 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = ({
                               ? 'text-[#9ca3af] hover:text-[#f3f4f6] hover:bg-[#334155]'
                               : 'text-[#64748b] hover:text-[#185abd] hover:bg-[#e2e8f0]'
                           }`}
-                          title="Capture & Send Confidential Exhibit (Snap)"
-                          aria-label="Capture Snap"
+                          title="Attach Confidential Exhibit Snap (Camera or Upload from Local)"
+                          aria-label="Capture or Upload Snap"
                         >
                           <Camera className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
                         </button>

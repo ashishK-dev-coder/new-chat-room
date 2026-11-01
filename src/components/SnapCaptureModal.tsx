@@ -10,7 +10,9 @@ import {
   FlipHorizontal,
   Shield,
   AlertCircle,
-  CheckCircle,
+  Upload,
+  ArrowLeft,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { isPanicKeyEvent } from '@/lib/panicUtils';
 
@@ -27,6 +29,8 @@ export const SnapCaptureModal: React.FC<SnapCaptureModalProps> = ({
   onSendSnap,
   darkMode = false,
 }) => {
+  // Modes: 'choose' (asks camera or upload), 'camera' (live viewfinder), 'preview' (image ready to send)
+  const [mode, setMode] = useState<'choose' | 'camera' | 'preview'>('choose');
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [isMirrored, setIsMirrored] = useState<boolean>(true);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
@@ -36,6 +40,7 @@ export const SnapCaptureModal: React.FC<SnapCaptureModalProps> = ({
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Stop camera tracks safely
   const stopCamera = useCallback(() => {
@@ -87,9 +92,9 @@ export const SnapCaptureModal: React.FC<SnapCaptureModalProps> = ({
     }
   }, [facingMode, stopCamera]);
 
-  // Restart camera when modal opens or facingMode changes
+  // Manage camera lifecycle: Only start when in 'camera' mode and no image captured yet
   useEffect(() => {
-    if (isOpen && !capturedImage) {
+    if (isOpen && mode === 'camera' && !capturedImage) {
       startCamera();
     } else {
       stopCamera();
@@ -97,7 +102,19 @@ export const SnapCaptureModal: React.FC<SnapCaptureModalProps> = ({
     return () => {
       stopCamera();
     };
-  }, [isOpen, capturedImage, startCamera, stopCamera]);
+  }, [isOpen, mode, capturedImage, startCamera, stopCamera]);
+
+  // Reset modal state when opened
+  useEffect(() => {
+    if (isOpen) {
+      setMode('choose');
+      setCapturedImage(null);
+      setErrorMessage(null);
+      setIsUploading(false);
+    } else {
+      stopCamera();
+    }
+  }, [isOpen, stopCamera]);
 
   // Handle capture shutter
   const handleCapture = () => {
@@ -123,10 +140,83 @@ export const SnapCaptureModal: React.FC<SnapCaptureModalProps> = ({
       const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
 
       setCapturedImage(dataUrl);
+      setMode('preview');
       stopCamera();
     } catch (err) {
       console.warn('Failed to capture frame:', err);
     }
+  };
+
+  // Handle local file upload
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Reset input so user can pick the same file again if they retake
+    e.target.value = '';
+
+    if (!file.type.startsWith('image/')) {
+      setErrorMessage('Please select an image file (JPEG, PNG, WEBP, etc.)');
+      return;
+    }
+
+    setErrorMessage(null);
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const rawDataUrl = event.target?.result as string;
+      if (!rawDataUrl) return;
+
+      // Scale / compress image to max 1920px (JPEG 0.85) to ensure instant upload
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const maxDim = 1920;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+            setCapturedImage(compressedDataUrl);
+            setMode('preview');
+            stopCamera();
+          } else {
+            setCapturedImage(rawDataUrl);
+            setMode('preview');
+            stopCamera();
+          }
+        } catch {
+          setCapturedImage(rawDataUrl);
+          setMode('preview');
+          stopCamera();
+        }
+      };
+      img.onerror = () => {
+        setCapturedImage(rawDataUrl);
+        setMode('preview');
+        stopCamera();
+      };
+      img.src = rawDataUrl;
+    };
+    reader.onerror = () => {
+      setErrorMessage('Failed to read image file from local device.');
+    };
+    reader.readAsDataURL(file);
   };
 
   // Handle send
@@ -153,6 +243,7 @@ export const SnapCaptureModal: React.FC<SnapCaptureModalProps> = ({
   const handleRetake = () => {
     setCapturedImage(null);
     setErrorMessage(null);
+    setMode('choose');
   };
 
   const handleClose = () => {
@@ -160,6 +251,7 @@ export const SnapCaptureModal: React.FC<SnapCaptureModalProps> = ({
     setCapturedImage(null);
     setErrorMessage(null);
     setIsUploading(false);
+    setMode('choose');
     onClose();
   };
 
@@ -231,26 +323,116 @@ export const SnapCaptureModal: React.FC<SnapCaptureModalProps> = ({
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={handleClose}
-            className="p-1 rounded-md opacity-60 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10 transition-colors cursor-pointer"
-            title="Cancel"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center space-x-1">
+            {mode === 'camera' && (
+              <button
+                type="button"
+                onClick={() => {
+                  stopCamera();
+                  setMode('choose');
+                }}
+                className="px-2 py-0.5 rounded text-[11px] font-medium opacity-70 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10 transition-colors flex items-center space-x-1"
+                title="Back to source selection"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Back</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={handleClose}
+              className="p-1 rounded-md opacity-60 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10 transition-colors cursor-pointer"
+              title="Cancel"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
-        {/* Viewfinder / Capture Preview Box */}
-        <div className="relative w-full aspect-[4/3] bg-black flex items-center justify-center overflow-hidden">
-          {capturedImage ? (
-            <img
-              src={capturedImage}
-              alt="Snap Preview"
-              className="w-full h-full object-cover select-none"
-            />
-          ) : (
-            <>
+        {/* Hidden native file input for local uploads */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={handleFileSelect}
+        />
+
+        {/* STATE 1: Choose Source Mode (Ask: Open Camera or Upload from Local) */}
+        {mode === 'choose' && (
+          <div className="p-5 sm:p-6 flex flex-col items-center justify-center select-none">
+            <div className="text-center space-y-1 mb-5">
+              <h3 className="font-semibold text-sm sm:text-base tracking-tight">
+                Select Exhibit Source
+              </h3>
+              <p className="text-[11px] sm:text-xs opacity-65 max-w-xs">
+                Choose how to attach your confidential view-once document snap:
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 w-full max-w-sm">
+              {/* Option 1: Open Camera */}
+              <button
+                type="button"
+                onClick={() => setMode('camera')}
+                className={`flex flex-col items-center p-4 rounded-xl border-2 transition-all cursor-pointer group text-center ${
+                  darkMode
+                    ? 'border-[#334155] hover:border-[#0078d4] bg-[#0f172a]/50 hover:bg-[#0078d4]/10'
+                    : 'border-[#e2e8f0] hover:border-[#0078d4] bg-[#f8fafc] hover:bg-[#0078d4]/5'
+                }`}
+              >
+                <div className="w-12 h-12 rounded-full bg-[#0078d4]/10 text-[#0078d4] flex items-center justify-center mb-2.5 group-hover:scale-110 transition-transform">
+                  <Camera className="w-6 h-6" />
+                </div>
+                <span className="font-semibold text-xs sm:text-sm block">
+                  Open Camera
+                </span>
+                <span className="text-[10.5px] opacity-60 block mt-0.5 leading-snug">
+                  Take a live photo with device camera
+                </span>
+              </button>
+
+              {/* Option 2: Upload from Local */}
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className={`flex flex-col items-center p-4 rounded-xl border-2 transition-all cursor-pointer group text-center ${
+                  darkMode
+                    ? 'border-[#334155] hover:border-emerald-500 bg-[#0f172a]/50 hover:bg-emerald-500/10'
+                    : 'border-[#e2e8f0] hover:border-emerald-600 bg-[#f8fafc] hover:bg-emerald-600/5'
+                }`}
+              >
+                <div className="w-12 h-12 rounded-full bg-emerald-500/10 text-emerald-500 flex items-center justify-center mb-2.5 group-hover:scale-110 transition-transform">
+                  <Upload className="w-6 h-6" />
+                </div>
+                <span className="font-semibold text-xs sm:text-sm block">
+                  Upload from Local
+                </span>
+                <span className="text-[10.5px] opacity-60 block mt-0.5 leading-snug">
+                  Choose photo from device or gallery
+                </span>
+              </button>
+            </div>
+
+            {errorMessage && (
+              <div className="mt-4 p-2 rounded bg-rose-900/90 text-rose-100 text-xs flex items-center space-x-1.5 shadow-md max-w-sm w-full">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span className="truncate">{errorMessage}</span>
+              </div>
+            )}
+
+            <div className="mt-5 flex items-center space-x-1.5 text-[10.5px] opacity-60">
+              <Shield className="w-3.5 h-3.5 text-amber-500" />
+              <span>Delivered view-once • Sender locked after sending</span>
+            </div>
+          </div>
+        )}
+
+        {/* STATE 2: Camera Viewfinder Mode */}
+        {mode === 'camera' && (
+          <>
+            <div className="relative w-full aspect-[4/3] bg-black flex items-center justify-center overflow-hidden">
               <video
                 ref={videoRef}
                 autoPlay
@@ -265,67 +447,142 @@ export const SnapCaptureModal: React.FC<SnapCaptureModalProps> = ({
                   <span className="text-xs">Initializing hardware camera...</span>
                 </div>
               )}
-            </>
-          )}
 
-          {/* Error notice */}
-          {errorMessage && (
-            <div className="absolute top-2 left-2 right-2 p-2 rounded bg-rose-900/90 text-rose-100 text-xs flex items-center space-x-1.5 shadow-md">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span className="truncate">{errorMessage}</span>
+              {/* Error notice with fallback button */}
+              {errorMessage && (
+                <div className="absolute inset-0 p-4 bg-black/85 flex flex-col items-center justify-center text-center space-y-3 z-20">
+                  <AlertCircle className="w-8 h-8 text-rose-400" />
+                  <span className="text-xs text-rose-200 max-w-xs">{errorMessage}</span>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-3.5 py-1.5 rounded-md text-xs font-semibold bg-[#0078d4] text-white flex items-center space-x-1.5 cursor-pointer shadow hover:bg-[#106ebe]"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Upload from Local Instead</span>
+                  </button>
+                </div>
+              )}
+
+              {/* Viewfinder Controls */}
+              {cameraActive && (
+                <div className="absolute top-2 right-2 flex items-center space-x-1.5 z-10">
+                  {/* Upload Local shortcut right from camera */}
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="p-1.5 rounded-full bg-black/60 text-white hover:bg-black/80 transition-colors shadow flex items-center space-x-1 text-[11px] px-2.5"
+                    title="Upload image from local storage"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Upload</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsMirrored((prev) => !prev)}
+                    className="p-1.5 rounded-full bg-black/60 text-white hover:bg-black/80 transition-colors shadow"
+                    title="Mirror Camera"
+                  >
+                    <FlipHorizontal className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFacingMode((prev) => (prev === 'user' ? 'environment' : 'user'));
+                      setIsMirrored((prev) => !prev);
+                    }}
+                    className="p-1.5 rounded-full bg-black/60 text-white hover:bg-black/80 transition-colors shadow"
+                    title="Switch Camera (Front/Rear)"
+                  >
+                    <SwitchCamera className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
+              {/* Ephemeral Security Badge */}
+              <div className="absolute bottom-2 left-2 px-2 py-0.5 rounded-full bg-black/60 backdrop-blur-xs text-[10px] text-amber-300 flex items-center space-x-1 shadow select-none">
+                <Shield className="w-3 h-3" />
+                <span>View-Once • Burn on Slide</span>
+              </div>
             </div>
-          )}
 
-          {/* Viewfinder Controls (only in live camera mode) */}
-          {!capturedImage && cameraActive && (
-            <div className="absolute top-2 right-2 flex items-center space-x-1.5 z-10">
+            {/* Bottom Actions Bar for Camera */}
+            <div
+              className={`p-3 border-t flex items-center justify-between select-none ${
+                darkMode ? 'bg-[#0f172a]/60 border-[#334155]' : 'bg-[#f8fafc] border-[#e2e8f0]'
+              }`}
+            >
               <button
                 type="button"
-                onClick={() => setIsMirrored((prev) => !prev)}
-                className="p-1.5 rounded-full bg-black/60 text-white hover:bg-black/80 transition-colors shadow"
-                title="Mirror Camera"
+                onClick={() => fileInputRef.current?.click()}
+                className="text-xs opacity-75 hover:opacity-100 flex items-center space-x-1 cursor-pointer"
               >
-                <FlipHorizontal className="w-3.5 h-3.5" />
+                <Upload className="w-3.5 h-3.5" />
+                <span>Upload Local</span>
               </button>
+
+              {/* Shutter Button */}
               <button
                 type="button"
-                onClick={() => {
-                  setFacingMode((prev) => (prev === 'user' ? 'environment' : 'user'));
-                  setIsMirrored((prev) => !prev);
-                }}
-                className="p-1.5 rounded-full bg-black/60 text-white hover:bg-black/80 transition-colors shadow"
-                title="Switch Camera (Front/Rear)"
+                onClick={handleCapture}
+                disabled={!cameraActive}
+                className="w-12 h-12 rounded-full border-4 border-[#0078d4] p-1 flex items-center justify-center hover:scale-105 active:scale-95 transition-transform cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
+                title="Capture Snap Photo"
               >
-                <SwitchCamera className="w-3.5 h-3.5" />
+                <div className="w-full h-full bg-white dark:bg-[#0078d4] rounded-full shadow" />
+              </button>
+
+              <button
+                type="button"
+                onClick={handleClose}
+                className="text-xs opacity-60 hover:opacity-100 transition-opacity cursor-pointer"
+              >
+                Cancel
               </button>
             </div>
-          )}
+          </>
+        )}
 
-          {/* Ephemeral Security Badge */}
-          <div className="absolute bottom-2 left-2 px-2 py-0.5 rounded-full bg-black/60 backdrop-blur-xs text-[10px] text-amber-300 flex items-center space-x-1 shadow select-none">
-            <Shield className="w-3 h-3" />
-            <span>View-Once • Burn on Slide</span>
-          </div>
-        </div>
+        {/* STATE 3: Preview Mode (Photo Taken or Local Image Selected) */}
+        {mode === 'preview' && capturedImage && (
+          <>
+            <div className="relative w-full aspect-[4/3] bg-black flex items-center justify-center overflow-hidden">
+              <img
+                src={capturedImage}
+                alt="Snap Preview"
+                className="w-full h-full object-contain select-none"
+              />
 
-        {/* Bottom Actions Bar */}
-        <div
-          className={`p-3 border-t flex items-center justify-between select-none ${
-            darkMode ? 'bg-[#0f172a]/60 border-[#334155]' : 'bg-[#f8fafc] border-[#e2e8f0]'
-          }`}
-        >
-          {capturedImage ? (
-            <>
+              {errorMessage && (
+                <div className="absolute top-2 left-2 right-2 p-2 rounded bg-rose-900/90 text-rose-100 text-xs flex items-center space-x-1.5 shadow-md">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span className="truncate">{errorMessage}</span>
+                </div>
+              )}
+
+              {/* Security badge */}
+              <div className="absolute bottom-2 left-2 px-2 py-0.5 rounded-full bg-black/60 backdrop-blur-xs text-[10px] text-amber-300 flex items-center space-x-1 shadow select-none">
+                <Shield className="w-3 h-3" />
+                <span>View-Once • Burn on Slide</span>
+              </div>
+            </div>
+
+            {/* Bottom Actions Bar for Preview */}
+            <div
+              className={`p-3 border-t flex items-center justify-between select-none ${
+                darkMode ? 'bg-[#0f172a]/60 border-[#334155]' : 'bg-[#f8fafc] border-[#e2e8f0]'
+              }`}
+            >
               <button
                 type="button"
                 onClick={handleRetake}
                 disabled={isUploading}
                 className="px-3 py-1.5 rounded-md text-xs font-medium border opacity-75 hover:opacity-100 transition-colors cursor-pointer disabled:opacity-30"
               >
-                Retake
+                Choose Another
               </button>
 
-              <div className="text-[11px] opacity-60">
+              <div className="text-[11px] opacity-60 hidden sm:block">
                 <span>Receiver can view 1 time</span>
               </div>
 
@@ -347,36 +604,10 @@ export const SnapCaptureModal: React.FC<SnapCaptureModalProps> = ({
                   </>
                 )}
               </button>
-            </>
-          ) : (
-            <div className="w-full flex items-center justify-between">
-              <span className="text-[11px] opacity-60">
-                Aim at document & tap shutter
-              </span>
-
-              {/* Shutter Button */}
-              <button
-                type="button"
-                onClick={handleCapture}
-                disabled={!cameraActive}
-                className="w-12 h-12 rounded-full border-4 border-[#0078d4] p-1 flex items-center justify-center hover:scale-105 active:scale-95 transition-transform cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
-                title="Capture Snap Photo"
-              >
-                <div className="w-full h-full bg-white dark:bg-[#0078d4] rounded-full shadow" />
-              </button>
-
-              <button
-                type="button"
-                onClick={handleClose}
-                className="text-xs opacity-60 hover:opacity-100 transition-opacity cursor-pointer"
-              >
-                Cancel
-              </button>
             </div>
-          )}
-        </div>
+          </>
+        )}
       </div>
     </div>
   );
 };
-

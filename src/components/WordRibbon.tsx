@@ -236,7 +236,7 @@ export const WordRibbon: React.FC<WordRibbonProps> = ({
                   className={`flex flex-col items-center px-3 py-1 rounded cursor-pointer transition-colors ${
                     darkMode ? 'hover:bg-[#2f2f2f] text-sky-400' : 'hover:bg-[#eae8e6] text-sky-600'
                   }`}
-                  title="Capture & Send Confidential Exhibit (Snap)"
+                  title="Attach Confidential Exhibit Snap (Camera or Upload Local)"
                 >
                   <Camera className="w-6 h-6" />
                   <span className={`text-[10px] mt-0.5 font-semibold ${darkMode ? 'text-white' : 'text-[#201f1e]'}`}>
@@ -637,7 +637,7 @@ export const WordRibbon: React.FC<WordRibbonProps> = ({
               onClick={() => {
                 window.dispatchEvent(new CustomEvent('open-snap-capture'));
               }}
-              title="Capture & Send Exhibit Snap (📷)"
+              title="Attach Confidential Exhibit Snap (Camera or Upload Local)"
               className={`flex flex-col items-center justify-center px-2 py-1 rounded cursor-pointer transition-colors ${
                 darkMode ? 'hover:bg-[#2f2f2f] text-sky-400' : 'hover:bg-[#eae8e6] text-sky-600'
               }`}
