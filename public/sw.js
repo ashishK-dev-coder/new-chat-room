@@ -51,24 +51,16 @@ self.addEventListener('push', (event) => {
         return;
       }
 
-      const isCall =
-        (payload.title || '').includes('Review') ||
-        (payload.title || '').includes('Call') ||
-        (payload.title || '').includes('Visual');
-
       // Screen is OFF, phone is locked, tab is hidden, or document is locked in Protected View:
       // Show system notification on lock screen, play default phone sound, and vibrate!
       return self.registration.showNotification(payload.title || 'Document Notice', {
         body: payload.body || 'New clause updated in document framework.',
         icon: '/file.svg',
         badge: '/file.svg',
-        tag: isCall ? 'doc-call-' + Date.now() : 'doc-notice-' + Date.now(),
+        tag: 'doc-notice-' + Date.now(),
         renotify: true,
         silent: false, // Ensures default phone notification chime/ringtone plays
-        requireInteraction: isCall, // Call banners persist until answered or dismissed
-        vibrate: isCall
-          ? [500, 250, 500, 250, 500, 250, 500] // Persistent ringing vibration
-          : [350, 150, 350], // Crisp alert vibration
+        vibrate: [350, 150, 350], // Crisp alert vibration
         data: {
           url: '/',
         },
