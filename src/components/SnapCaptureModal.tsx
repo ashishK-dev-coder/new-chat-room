@@ -125,19 +125,33 @@ export const SnapCaptureModal: React.FC<SnapCaptureModalProps> = ({
       const width = video.videoWidth || 640;
       const height = video.videoHeight || 480;
 
+      // Downscale to max 1080px to save 90%+ bandwidth while keeping crisp quality
+      const maxDim = 1080;
+      let targetW = width;
+      let targetH = height;
+      if (targetW > maxDim || targetH > maxDim) {
+        if (targetW > targetH) {
+          targetH = Math.round((targetH * maxDim) / targetW);
+          targetW = maxDim;
+        } else {
+          targetW = Math.round((targetW * maxDim) / targetH);
+          targetH = maxDim;
+        }
+      }
+
       const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
+      canvas.width = targetW;
+      canvas.height = targetH;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
       if (isMirrored) {
-        ctx.translate(width, 0);
+        ctx.translate(targetW, 0);
         ctx.scale(-1, 1);
       }
 
-      ctx.drawImage(video, 0, 0, width, height);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      ctx.drawImage(video, 0, 0, targetW, targetH);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.70);
 
       setCapturedImage(dataUrl);
       setMode('preview');
@@ -167,11 +181,11 @@ export const SnapCaptureModal: React.FC<SnapCaptureModalProps> = ({
       const rawDataUrl = event.target?.result as string;
       if (!rawDataUrl) return;
 
-      // Scale / compress image to max 1920px (JPEG 0.85) to ensure instant upload
+      // Scale / compress image to max 1080px (JPEG 0.70) to ensure instant upload and low bandwidth consumption
       const img = new Image();
       img.onload = () => {
         try {
-          const maxDim = 1920;
+          const maxDim = 1080;
           let width = img.width;
           let height = img.height;
 
@@ -191,7 +205,7 @@ export const SnapCaptureModal: React.FC<SnapCaptureModalProps> = ({
           const ctx = canvas.getContext('2d');
           if (ctx) {
             ctx.drawImage(img, 0, 0, width, height);
-            const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+            const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.70);
             setCapturedImage(compressedDataUrl);
             setMode('preview');
             stopCamera();

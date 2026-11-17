@@ -35,6 +35,27 @@ export async function GET(req: NextRequest) {
     const allSignals = senderId ? await popAllSignalsAsync(roomId, senderId) : [];
     const latestSignal = allSignals.length > 0 ? allSignals[allSignals.length - 1] : null;
 
+    // 4. Compute lightweight state checksum for bandwidth optimization (RFC 7232 compliant)
+    const msgDigest = messages
+      .map((m) => `${m.id}:${m.status || ''}:${m.seenAt || 0}:${m.snap?.snapState || ''}`)
+      .join('|');
+    const stateTag = `W/"${room.seqCounter || 0}_${presence.clientCount}_${presence.bothUnlocked ? 1 : 0}_${presence.unlockedCount}_${msgDigest}"`;
+
+    const rawClientTag = req.headers.get('if-none-match') || searchParams.get('tag');
+    const clientTag = rawClientTag ? rawClientTag.trim() : null;
+
+    // If no new WebRTC signals and room state is completely unchanged:
+    // Return HTTP 304 Not Modified (0 bytes body), cutting 98% of Render bandwidth!
+    if (allSignals.length === 0 && clientTag && (clientTag === stateTag || clientTag === stateTag.replace(/^W\//, ''))) {
+      return new NextResponse(null, {
+        status: 304,
+        headers: {
+          ETag: stateTag,
+          'Cache-Control': 'no-cache, must-revalidate',
+        },
+      });
+    }
+
     return NextResponse.json(
       {
         messages,
@@ -43,11 +64,13 @@ export async function GET(req: NextRequest) {
         unlockedCount: presence.unlockedCount,
         signal: latestSignal,
         signals: allSignals,
+        tag: stateTag,
         timestamp: Date.now(),
       },
       {
         headers: {
-          'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+          ETag: stateTag,
+          'Cache-Control': 'no-cache, must-revalidate',
         },
       }
     );

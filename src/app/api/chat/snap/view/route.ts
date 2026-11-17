@@ -26,10 +26,16 @@ export async function GET(req: NextRequest) {
   const contentType = matches[1];
   const buffer = Buffer.from(matches[2], 'base64');
 
+  const etag = `"${id}"`;
+  if (req.headers.get('if-none-match') === etag) {
+    return new NextResponse(null, { status: 304 });
+  }
+
   return new NextResponse(buffer, {
     headers: {
       'Content-Type': contentType,
-      'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+      ETag: etag,
+      'Cache-Control': 'private, max-age=3600',
     },
   });
 }

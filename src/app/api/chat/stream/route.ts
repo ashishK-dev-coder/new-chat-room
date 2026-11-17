@@ -80,13 +80,14 @@ export async function GET(req: NextRequest) {
       });
       sendChunk(`data: ${initPayload}\n\n`);
 
-      // 4. Fast keep-alive heartbeat every 3 seconds to immediately detect cut/leave connections
-      // and rapidly push presence count & unlock status updates
+      // 4. Lightweight keep-alive heartbeat every 15 seconds to keep SSE connection open,
+      // prevent browser watchdog reconnects, and push presence updates
       let lastReportedCount = currentCount;
       let lastReportedBothUnlocked = bothUnlocked;
       keepAliveTimer = setInterval(() => {
         try {
-          controller.enqueue(encoder.encode(`: ping\n\n`));
+          // Send lightweight data ping so EventSource onmessage triggers and updates lastSseEventTime
+          sendChunk(`data: {"type":"ping"}\n\n`);
           // Refresh heartbeat for this live SSE client
           recordAuthorHeartbeat(roomId, senderId);
           const count = getActiveAuthorCount(room);
@@ -112,7 +113,7 @@ export async function GET(req: NextRequest) {
             cleanup = null;
           }
         }
-      }, 3000);
+      }, 15000);
 
       // 5. Instantly clean up on browser tab close / page navigation abort
       if (req.signal) {

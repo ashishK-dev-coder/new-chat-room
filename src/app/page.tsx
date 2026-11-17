@@ -1324,6 +1324,10 @@ export default function WordChatApp() {
         try {
           const data = JSON.parse(event.data);
 
+          if (data.type === 'ping') {
+            return;
+          }
+
           if (data.type === 'init') {
             if (Array.isArray(data.messages) && data.messages.length > 0) {
               if (!isInitialSyncDoneRef.current) {
@@ -1500,17 +1504,17 @@ export default function WordChatApp() {
 
     connectSSE();
 
-    // Watchdog: If no SSE event received in 10s on visible tab, force reconnect
+    // Watchdog: If no SSE event received in 40s on visible tab, force reconnect
     sseWatchdogInterval = setInterval(() => {
       if (!isMounted) return;
       const now = Date.now();
       if (
         !document.hidden &&
-        (!eventSource || eventSource.readyState === EventSource.CLOSED || now - lastSseEventTime > 10000)
+        (!eventSource || eventSource.readyState === EventSource.CLOSED || now - lastSseEventTime > 40000)
       ) {
         connectSSE();
       }
-    }, 4000);
+    }, 10000);
 
     const handleVisibilitySSE = () => {
       if (!document.hidden && isMounted) {
@@ -1578,6 +1582,7 @@ export default function WordChatApp() {
 
     let isMounted = true;
     let syncTimeout: NodeJS.Timeout | null = null;
+    let lastSyncTag = '';
 
     const runSync = async () => {
       const activeId = tabAuthorIdRef.current || tabAuthorId;
@@ -1585,10 +1590,25 @@ export default function WordChatApp() {
 
       try {
         const res = await fetch(
-          `/api/chat/sync?room=${encodeURIComponent(roomId)}&senderId=${encodeURIComponent(activeId)}&unlocked=${isUnlockedRef.current}&_t=${Date.now()}`
+          `/api/chat/sync?room=${encodeURIComponent(roomId)}&senderId=${encodeURIComponent(activeId)}&unlocked=${isUnlockedRef.current}&tag=${encodeURIComponent(lastSyncTag)}&_t=${Date.now()}`,
+          {
+            headers: lastSyncTag ? { 'If-None-Match': lastSyncTag } : undefined,
+          }
         );
+
+        // HTTP 304: Room state is completely unchanged (0 bytes payload downloaded!)
+        if (res.status === 304) {
+          return;
+        }
+
         if (res.ok && isMounted) {
+          const resTag = res.headers.get('etag');
           const data = await res.json();
+          if (resTag) {
+            lastSyncTag = resTag;
+          } else if (data?.tag) {
+            lastSyncTag = data.tag;
+          }
           if (Array.isArray(data?.messages) && data.messages.length > 0) {
             if (!isInitialSyncDoneRef.current) {
               data.messages.forEach((m: ChatMessage) => notifiedMsgIdsRef.current.add(m.id));
@@ -1688,20 +1708,29 @@ export default function WordChatApp() {
         // ignore offline sync
       } finally {
         if (isMounted) {
-          const isCallActiveOrConnecting =
-            isPreviewActive || showPreviewConfirm || incomingPreviewInvite !== null;
+          const isCallNegotiating =
+            showPreviewConfirmRef.current ||
+            incomingPreviewInviteRef.current !== null ||
+            showVoiceCallConfirmRef.current ||
+            incomingVoiceInviteRef.current !== null;
 
-          let nextDelay = 2000;
-          if (isCallActiveOrConnecting) {
-            nextDelay = 800; // 800ms ultra-fast sync during call setup & active call
+          const isCallConnected =
+            (isPreviewActiveRef.current && !showPreviewConfirmRef.current) ||
+            (isVoiceCallActiveRef.current && !showVoiceCallConfirmRef.current);
+
+          let nextDelay = 15000;
+          if (isCallNegotiating) {
+            nextDelay = 1200; // 1.2s rapid sync only during call setup & handshake
+          } else if (isCallConnected) {
+            nextDelay = 10000; // 10s during active call (audio/video runs P2P directly over UDP STUN)
           } else if (document.hidden) {
-            nextDelay = 6000; // 6s when tab in background (mobile screen off / minimized)
+            nextDelay = 45000; // 45s when in background / screen off (instant wakeup on visibility)
           } else if (!isUnlockedRef.current) {
-            nextDelay = 3000; // 3s when locked in protected view
+            nextDelay = 20000; // 20s when locked in protected view
           } else if (isSseConnectedRef.current) {
-            nextDelay = 2000; // 2s active collaborative editing & chatting
+            nextDelay = 15000; // 15s gentle backup heartbeat when SSE real-time stream is active
           } else {
-            nextDelay = 1200; // 1.2s rapid fallback when SSE is reconnecting
+            nextDelay = 2500; // 2.5s fallback when SSE is offline/reconnecting
           }
           syncTimeout = setTimeout(runSync, nextDelay);
         }
