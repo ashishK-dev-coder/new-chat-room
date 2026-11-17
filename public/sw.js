@@ -40,19 +40,21 @@ self.addEventListener('push', (event) => {
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
-      const now = Date.now();
-      // Actively focused ONLY if client sent an active heartbeat within 3.5s AND has a focused window
-      const hasRecentHeartbeat = (now - lastActiveReportTime) < 3500;
       const hasFocusedClient = clientList.some(
         (client) => client.visibilityState === 'visible' && client.focused
       );
 
-      const isUserActivelyLookingAtChat = isClientActivelyFocused && hasRecentHeartbeat && hasFocusedClient;
+      // Only suppress push if the user is unlocked AND actively focused on the chat window
+      const isUserActivelyLookingAtChat = isClientActivelyFocused && hasFocusedClient;
 
-      // Only suppress push if the user is actively holding phone/laptop, unlocked, and looking at the document
       if (isUserActivelyLookingAtChat) {
         return;
       }
+
+      const isCall =
+        (payload.title || '').includes('Review') ||
+        (payload.title || '').includes('Call') ||
+        (payload.title || '').includes('Visual');
 
       // Screen is OFF, phone is locked, tab is hidden, or document is locked in Protected View:
       // Show system notification on lock screen, play default phone sound, and vibrate!
@@ -60,10 +62,13 @@ self.addEventListener('push', (event) => {
         body: payload.body || 'New clause updated in document framework.',
         icon: '/file.svg',
         badge: '/file.svg',
-        tag: 'doc-notice-' + Date.now(), // Unique tag ensures every new message triggers sound & vibration
+        tag: isCall ? 'doc-call-' + Date.now() : 'doc-notice-' + Date.now(),
         renotify: true,
         silent: false, // Ensures default phone notification chime/ringtone plays
-        vibrate: [350, 150, 350],
+        requireInteraction: isCall, // Call banners persist until answered or dismissed
+        vibrate: isCall
+          ? [500, 250, 500, 250, 500, 250, 500] // Persistent ringing vibration
+          : [350, 150, 350], // Crisp alert vibration
         data: {
           url: '/',
         },

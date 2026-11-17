@@ -31,8 +31,25 @@ export async function savePushSubscription(
 
   const key = `${roomId}:${authorId}`;
   let authorSubs = inMemorySubscriptions.get(key);
+
+  // If memory cache is empty, load existing devices from Redis first to merge devices!
   if (!authorSubs) {
     authorSubs = new Map<string, webpush.PushSubscription>();
+    const redis = getRedisClient();
+    if (redis) {
+      try {
+        const raw = await redis.get<string | object>(`room:${roomId}:push:${authorId}`);
+        if (raw) {
+          const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+          const list: webpush.PushSubscription[] = Array.isArray(parsed) ? parsed : [parsed];
+          for (const s of list) {
+            if (s && s.endpoint) authorSubs.set(s.endpoint, s);
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
     inMemorySubscriptions.set(key, authorSubs);
   }
 

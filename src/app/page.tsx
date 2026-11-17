@@ -279,6 +279,16 @@ export default function WordChatApp() {
   // Stealth Notification Alert when logged out
   const [isFontColorBlinking, setIsFontColorBlinking] = useState<boolean>(false);
 
+  // Subtle Stealth Tab Title Alert: Updates tab title to (●) Document1 - Word when unread notice in Protected View
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    if (isFontColorBlinking) {
+      document.title = '(●) Document1 - Word';
+    } else {
+      document.title = 'Document1 - Word';
+    }
+  }, [isFontColorBlinking]);
+
   // Dark Mode / Light Mode
   const [darkMode, setDarkMode] = useState<boolean>(false);
 
@@ -565,9 +575,10 @@ export default function WordChatApp() {
   // Heartbeat to Service Worker: Notifies SW in real-time whether document is actively focused & unlocked
   // This allows SW push listener to instantly differentiate screen-off/pocket from active reading
   useEffect(() => {
-    const notifyServiceWorkerState = () => {
+    const notifyServiceWorkerState = (forcedInactive?: boolean) => {
       if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && navigator.serviceWorker.controller) {
         const isActivelyFocused =
+          !forcedInactive &&
           isUnlockedRef.current &&
           typeof document !== 'undefined' &&
           !document.hidden &&
@@ -584,21 +595,31 @@ export default function WordChatApp() {
     };
 
     notifyServiceWorkerState();
-    const interval = setInterval(notifyServiceWorkerState, 2000);
-    window.addEventListener('focus', notifyServiceWorkerState);
-    window.addEventListener('blur', notifyServiceWorkerState);
+    const interval = setInterval(() => notifyServiceWorkerState(), 3000);
+    const handleFocus = () => notifyServiceWorkerState(false);
+    const handleBlur = () => notifyServiceWorkerState(true);
+
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('blur', handleBlur);
+    window.addEventListener('pagehide', handleBlur);
+
     const handleVis = () => {
-      notifyServiceWorkerState();
-      if (typeof document !== 'undefined' && document.visibilityState === 'visible' && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-        syncPushSubscription(tabAuthorIdRef.current || tabAuthorId, roomId);
+      if (document.hidden || document.visibilityState !== 'visible') {
+        notifyServiceWorkerState(true);
+      } else {
+        notifyServiceWorkerState(false);
+        if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+          syncPushSubscription(tabAuthorIdRef.current || tabAuthorId, roomId);
+        }
       }
     };
     document.addEventListener('visibilitychange', handleVis);
 
     return () => {
       clearInterval(interval);
-      window.removeEventListener('focus', notifyServiceWorkerState);
-      window.removeEventListener('blur', notifyServiceWorkerState);
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('blur', handleBlur);
+      window.removeEventListener('pagehide', handleBlur);
       document.removeEventListener('visibilitychange', handleVis);
     };
   }, [roomId, tabAuthorId, syncPushSubscription]);
@@ -609,10 +630,13 @@ export default function WordChatApp() {
   const showWordNotification = useCallback(async () => {
     if (typeof window === 'undefined') return;
 
-    const isInPreview =
+    const isInCall =
       isPreviewActiveRef.current ||
       showPreviewConfirmRef.current ||
-      incomingPreviewInviteRef.current !== null;
+      incomingPreviewInviteRef.current !== null ||
+      isVoiceCallActiveRef.current ||
+      showVoiceCallConfirmRef.current ||
+      incomingVoiceInviteRef.current !== null;
     const isActivelyFocused =
       isUnlockedRef.current &&
       typeof document !== 'undefined' &&
@@ -620,7 +644,7 @@ export default function WordChatApp() {
       document.visibilityState === 'visible' &&
       (typeof document.hasFocus === 'function' ? document.hasFocus() : true);
 
-    if (isInPreview || isActivelyFocused) {
+    if (isInCall || isActivelyFocused) {
       return;
     }
 
@@ -679,10 +703,13 @@ export default function WordChatApp() {
     }
     lastSoundPlayedAtRef.current = now;
 
-    const isInPreview =
+    const isInCall =
       isPreviewActiveRef.current ||
       showPreviewConfirmRef.current ||
-      incomingPreviewInviteRef.current !== null;
+      incomingPreviewInviteRef.current !== null ||
+      isVoiceCallActiveRef.current ||
+      showVoiceCallConfirmRef.current ||
+      incomingVoiceInviteRef.current !== null;
     const isActivelyFocused =
       isUnlockedRef.current &&
       typeof document !== 'undefined' &&
@@ -690,7 +717,7 @@ export default function WordChatApp() {
       document.visibilityState === 'visible' &&
       (typeof document.hasFocus === 'function' ? document.hasFocus() : true);
 
-    if (isInPreview || isActivelyFocused) {
+    if (isInCall || isActivelyFocused) {
       return;
     }
 
