@@ -67,8 +67,6 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
 
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [isSpeakerMuted, setIsSpeakerMuted] = useState<boolean>(false);
-  const [speakerMode, setSpeakerMode] = useState<'calling' | 'loudspeaker'>('calling');
-  const speakerModeRef = useRef<'calling' | 'loudspeaker'>('calling');
   const [speakerNotification, setSpeakerNotification] = useState<string | null>(null);
   const [isMinimized, setIsMinimized] = useState<boolean>(false);
   const [callDuration, setCallDuration] = useState<number>(0);
@@ -176,6 +174,18 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
       remoteAudioRef.current.srcObject = null;
     }
 
+    // Reset iOS Safari AudioSession back to auto when call ends
+    if (typeof navigator !== 'undefined' && 'audioSession' in navigator) {
+      try {
+        const session = (navigator as unknown as { audioSession: { type: string } }).audioSession;
+        if (session) {
+          session.type = 'auto';
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     if (pcRef.current) {
       try {
         pcRef.current.onicecandidate = null;
@@ -242,20 +252,31 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
     }
   }, []);
 
-  // Start microphone
+  // Start microphone with native voice telephony constraints
   const startMicrophone = useCallback(async (): Promise<MediaStream | null> => {
     try {
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());
       }
 
+      // 1. Force iOS Safari AudioSession to play-and-record (routes to in-ear calling speaker)
+      if (typeof navigator !== 'undefined' && 'audioSession' in navigator) {
+        try {
+          const session = (navigator as unknown as { audioSession: { type: string } }).audioSession;
+          if (session) {
+            session.type = 'play-and-record';
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      // 2. Request native voice communication constraints
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          channelCount: 1,
-          sampleRate: 48000,
+          echoCancellation: { ideal: true },
+          noiseSuppression: { ideal: true },
+          autoGainControl: { ideal: true },
         },
         video: false,
       });
@@ -271,27 +292,23 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
     }
   }, [setStatus, setupAudioAnalyser]);
 
-  // Apply speaker routing & acoustic level (calling speaker / earpiece vs music / loudspeaker)
+  // Strictly enforce Calling Speaker (Earpiece / In-Ear) routing & calibrated acoustic volume
   const applySpeakerMode = useCallback(
-    async (mode: 'calling' | 'loudspeaker', muted = isSpeakerMuted) => {
-      speakerModeRef.current = mode;
-      setSpeakerMode(mode);
-
-      // 1. AudioSession API for iOS Safari / WebKit
-      // 'play-and-record' directs audio to earpiece (calling speaker)
-      // 'playback' directs audio to down speaker (music speaker)
+    async (_mode?: string, muted = isSpeakerMuted) => {
+      // 1. AudioSession API for iOS Safari / WebKit:
+      // 'play-and-record' directs audio strictly to the in-ear receiver (calling speaker)
       if (typeof navigator !== 'undefined' && 'audioSession' in navigator) {
         try {
           const session = (navigator as unknown as { audioSession: { type: string } }).audioSession;
           if (session) {
-            session.type = mode === 'calling' ? 'play-and-record' : 'playback';
+            session.type = 'play-and-record';
           }
         } catch (err) {
           console.warn('AudioSession config notice:', err);
         }
       }
 
-      // 2. Android native WebView bridge if available
+      // 2. Android native WebView bridge if available: turn OFF loudspeaker
       if (typeof window !== 'undefined') {
         try {
           const win = window as unknown as {
@@ -299,14 +316,15 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
             Android?: { setSpeakerphoneOn: (on: boolean) => void };
           };
           if (win.AndroidAudio?.setSpeakerphoneOn) {
-            win.AndroidAudio.setSpeakerphoneOn(mode === 'loudspeaker');
+            win.AndroidAudio.setSpeakerphoneOn(false);
           } else if (win.Android?.setSpeakerphoneOn) {
-            win.Android.setSpeakerphoneOn(mode === 'loudspeaker');
+            win.Android.setSpeakerphoneOn(false);
           }
         } catch {}
       }
 
-      // 3. Hardware sink routing via setSinkId if supported
+      // 3. Hardware sink routing via setSinkId if supported:
+      // Target earpiece, receiver, or non-speaker hardware endpoint
       const audioEl = remoteAudioRef.current;
       if (
         audioEl &&
@@ -318,25 +336,16 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
           const audioOutputs = devices.filter((d) => d.kind === 'audiooutput');
 
           if (audioOutputs.length > 0) {
-            if (mode === 'calling') {
-              const earpiece = audioOutputs.find((d) =>
-                /earpiece|receiver|phone|handset|communication|headset|internal/i.test(d.label)
-              );
-              if (earpiece) {
-                await (audioEl as unknown as { setSinkId: (id: string) => Promise<void> }).setSinkId(earpiece.deviceId);
-              } else if (audioOutputs.length > 1) {
-                const nonSpeaker = audioOutputs.find((d) => !/speaker|loudspeaker/i.test(d.label));
-                if (nonSpeaker) {
-                  await (audioEl as unknown as { setSinkId: (id: string) => Promise<void> }).setSinkId(nonSpeaker.deviceId);
-                }
+            const earpiece = audioOutputs.find((d) =>
+              /earpiece|receiver|phone|handset|communication|headset|internal/i.test(d.label)
+            );
+            if (earpiece) {
+              await (audioEl as unknown as { setSinkId: (id: string) => Promise<void> }).setSinkId(earpiece.deviceId);
+            } else if (audioOutputs.length > 1) {
+              const nonSpeaker = audioOutputs.find((d) => !/speaker|loudspeaker|music|stereo/i.test(d.label));
+              if (nonSpeaker) {
+                await (audioEl as unknown as { setSinkId: (id: string) => Promise<void> }).setSinkId(nonSpeaker.deviceId);
               }
-            } else {
-              const speaker = audioOutputs.find((d) =>
-                /speaker|loudspeaker|external|music|stereo/i.test(d.label)
-              );
-              await (audioEl as unknown as { setSinkId: (id: string) => Promise<void> }).setSinkId(
-                speaker ? speaker.deviceId : 'default'
-              );
             }
           }
         } catch (err) {
@@ -344,23 +353,13 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
         }
       }
 
-      // 4. Acoustic calibration:
-      // Calling speaker mode: calibrated comfortable in-ear level (35%) so holding to ear is gentle and private
-      // Loudspeaker mode: 100% full volume for room-filling hands-free sound
+      // 4. Acoustic Calibration for In-Ear Calling Speaker:
+      // Strictly calibrated to in-ear telephone listening level (35% volume)
+      // Completely eliminates loud, room-filling loudspeaker blast!
       if (audioEl) {
         audioEl.muted = muted;
-        audioEl.volume = muted ? 0 : mode === 'calling' ? 0.35 : 1.0;
+        audioEl.volume = muted ? 0 : 0.35;
       }
-
-      // 5. User feedback toast
-      setSpeakerNotification(
-        mode === 'calling'
-          ? 'Calling Speaker (Ear Mode) • In-ear private sound'
-          : 'Music Speaker (Loudspeaker) • Hands-free sound'
-      );
-      setTimeout(() => {
-        setSpeakerNotification(null);
-      }, 2500);
     },
     [isSpeakerMuted]
   );
@@ -393,7 +392,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
         if (remoteAudioRef.current.srcObject !== remoteStream) {
           remoteAudioRef.current.srcObject = remoteStream;
         }
-        applySpeakerMode(speakerModeRef.current);
+        applySpeakerMode();
         remoteAudioRef.current.play().catch((err) => {
           console.warn('Audio autoplay notice:', err);
         });
@@ -654,17 +653,17 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
     }
   };
 
-  // Toggle between Calling Speaker (Earpiece) and Music Speaker (Loudspeaker)
-  const toggleSpeakerMode = () => {
-    const nextMode = speakerMode === 'calling' ? 'loudspeaker' : 'calling';
-    applySpeakerMode(nextMode);
-  };
-
-  // Toggle speaker mute
+  // Toggle calling speaker mute
   const toggleSpeakerMute = () => {
     const nextMuted = !isSpeakerMuted;
     setIsSpeakerMuted(nextMuted);
-    applySpeakerMode(speakerMode, nextMuted);
+    applySpeakerMode(undefined, nextMuted);
+    setSpeakerNotification(
+      nextMuted ? 'Calling Speaker Muted' : 'Calling Speaker Active (Ear Mode)'
+    );
+    setTimeout(() => {
+      setSpeakerNotification(null);
+    }, 2000);
   };
 
   if (!isOpen) return null;
@@ -704,20 +703,20 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
             </button>
             <button
               type="button"
-              onClick={toggleSpeakerMode}
+              onClick={toggleSpeakerMute}
               className={`p-1 rounded cursor-pointer transition-colors ${
-                speakerMode === 'loudspeaker' ? 'bg-[#107c41] text-white' : 'bg-white/20 text-white'
+                isSpeakerMuted ? 'bg-amber-600 text-white' : 'bg-white/20 text-white'
               }`}
               title={
-                speakerMode === 'calling'
-                  ? 'Calling Speaker (Ear) • Tap to switch to Music Speaker'
-                  : 'Music Speaker (Loud) • Tap to switch to Calling Speaker'
+                isSpeakerMuted
+                  ? 'Calling Speaker Muted • Tap to Unmute'
+                  : 'Calling Speaker Active (Ear Mode) • Tap to Mute'
               }
             >
-              {speakerMode === 'calling' ? (
-                <Smartphone className="w-3.5 h-3.5" />
+              {isSpeakerMuted ? (
+                <VolumeX className="w-3.5 h-3.5" />
               ) : (
-                <Volume2 className="w-3.5 h-3.5" />
+                <Smartphone className="w-3.5 h-3.5" />
               )}
             </button>
             <button
@@ -846,49 +845,35 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
                 </div>
               </div>
 
-              {/* Interactive Audio Output Switcher (Calling Speaker vs Music Speaker) */}
-              <div className="w-full max-w-xs pt-1">
+              {/* Dedicated Calling Speaker Banner (Music Speaker Removed) */}
+              <div className="w-full max-w-xs pt-1 flex flex-col items-center space-y-1.5">
                 <div
-                  className={`flex items-center justify-center p-1 rounded-lg border text-xs font-medium space-x-1 transition-colors ${
-                    darkMode ? 'bg-[#0f172a] border-[#334155]' : 'bg-[#f1f5f9] border-[#e2e8f0]'
+                  className={`flex items-center justify-center space-x-2 py-2 px-3.5 rounded-lg border text-xs font-semibold w-full shadow-xs transition-colors ${
+                    isSpeakerMuted
+                      ? 'bg-amber-500/15 border-amber-500/30 text-amber-600 dark:text-amber-400'
+                      : darkMode
+                      ? 'bg-[#185abd]/20 border-[#185abd]/40 text-blue-200'
+                      : 'bg-[#185abd]/10 border-[#185abd]/30 text-[#185abd]'
                   }`}
                 >
-                  <button
-                    type="button"
-                    onClick={() => applySpeakerMode('calling')}
-                    className={`flex-1 flex items-center justify-center space-x-1.5 py-1.5 px-2 rounded-md transition-all cursor-pointer ${
-                      speakerMode === 'calling'
-                        ? 'bg-[#185abd] text-white shadow-xs font-semibold'
-                        : darkMode
-                        ? 'text-gray-400 hover:text-white'
-                        : 'text-gray-600 hover:text-black'
-                    }`}
-                    title="Switch to Calling Speaker (Earpiece / In-Ear mode)"
-                  >
-                    <Smartphone className="w-3.5 h-3.5" />
-                    <span>Calling (Ear)</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => applySpeakerMode('loudspeaker')}
-                    className={`flex-1 flex items-center justify-center space-x-1.5 py-1.5 px-2 rounded-md transition-all cursor-pointer ${
-                      speakerMode === 'loudspeaker'
-                        ? 'bg-[#107c41] text-white shadow-xs font-semibold'
-                        : darkMode
-                        ? 'text-gray-400 hover:text-white'
-                        : 'text-gray-600 hover:text-black'
-                    }`}
-                    title="Switch to Music Speaker (Down Speaker / Loudspeaker)"
-                  >
-                    <Volume2 className="w-3.5 h-3.5" />
-                    <span>Music (Loud)</span>
-                  </button>
+                  {isSpeakerMuted ? (
+                    <VolumeX className="w-4 h-4 text-amber-500" />
+                  ) : (
+                    <Smartphone className="w-4 h-4 animate-pulse text-[#185abd] dark:text-blue-400" />
+                  )}
+                  <span>
+                    {isSpeakerMuted
+                      ? 'Calling Speaker Muted'
+                      : 'Calling Speaker Active (Ear Mode)'}
+                  </span>
                 </div>
+                <p className="text-[11px] text-center text-gray-500 dark:text-gray-400 leading-tight">
+                  Hold phone to ear or connect earphones for private in-ear voice.
+                </p>
 
                 {/* Instant Feedback Toast */}
                 {speakerNotification && (
-                  <div className="mt-1.5 py-1 px-2.5 rounded bg-black/85 text-white text-[10.5px] font-medium leading-tight animate-in fade-in duration-150">
+                  <div className="mt-1 py-1 px-2.5 rounded bg-black/85 text-white text-[10.5px] font-medium leading-tight animate-in fade-in duration-150">
                     {speakerNotification}
                   </div>
                 )}
@@ -916,7 +901,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
               {/* Security Banner */}
               <div className="text-[10.5px] opacity-60 flex items-center space-x-1">
                 <Shield className="w-3 h-3 text-emerald-500" />
-                <span>P2P WebRTC 48kHz Encrypted Audio</span>
+                <span>P2P WebRTC Encrypted Audio</span>
               </div>
             </div>
 
@@ -953,27 +938,27 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
                 <span>End Call</span>
               </button>
 
-              {/* Speaker Mode Toggle Button (Calling Speaker vs Music Speaker) */}
+              {/* Calling Speaker Mute / Unmute Button */}
               <button
                 type="button"
-                onClick={toggleSpeakerMode}
+                onClick={toggleSpeakerMute}
                 className={`p-2.5 rounded-full transition-all cursor-pointer shadow-xs ${
-                  speakerMode === 'loudspeaker'
-                    ? 'bg-[#107c41] text-white hover:bg-[#0e6b37]'
+                  isSpeakerMuted
+                    ? 'bg-amber-600 text-white hover:bg-amber-700'
                     : darkMode
                     ? 'bg-[#185abd] text-white hover:bg-[#104a9b]'
                     : 'bg-[#185abd] text-white hover:bg-[#104a9b]'
                 }`}
                 title={
-                  speakerMode === 'calling'
-                    ? 'Calling Speaker (Ear Mode) Active • Tap to switch to Music Speaker'
-                    : 'Music Speaker (Loudspeaker) Active • Tap to switch to Calling Speaker'
+                  isSpeakerMuted
+                    ? 'Calling Speaker Muted • Tap to Unmute'
+                    : 'Calling Speaker Active (In-Ear) • Tap to Mute'
                 }
               >
-                {speakerMode === 'calling' ? (
-                  <Smartphone className="w-5 h-5" />
+                {isSpeakerMuted ? (
+                  <VolumeX className="w-5 h-5" />
                 ) : (
-                  <Volume2 className="w-5 h-5" />
+                  <Smartphone className="w-5 h-5" />
                 )}
               </button>
             </div>
