@@ -67,6 +67,8 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
 
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [isSpeakerMuted, setIsSpeakerMuted] = useState<boolean>(false);
+  const [earVolume, setEarVolume] = useState<number>(35); // 35% calibrated in-ear whispering level
+  const [isEarShieldActive, setIsEarShieldActive] = useState<boolean>(false);
   const [speakerNotification, setSpeakerNotification] = useState<string | null>(null);
   const [isMinimized, setIsMinimized] = useState<boolean>(false);
   const [callDuration, setCallDuration] = useState<number>(0);
@@ -84,6 +86,9 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const animFrameRef = useRef<number | null>(null);
+  const gainNodeRef = useRef<GainNode | null>(null);
+  const remoteSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const filterNodesRef = useRef<{ highpass: BiquadFilterNode; lowpass: BiquadFilterNode } | null>(null);
 
   const sendSignalRef = useRef(sendSignal);
   const onCloseRef = useRef(onClose);
@@ -147,6 +152,28 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
     if (animFrameRef.current) {
       cancelAnimationFrame(animFrameRef.current);
       animFrameRef.current = null;
+    }
+
+    if (remoteSourceRef.current) {
+      try {
+        remoteSourceRef.current.disconnect();
+      } catch {}
+      remoteSourceRef.current = null;
+    }
+
+    if (gainNodeRef.current) {
+      try {
+        gainNodeRef.current.disconnect();
+      } catch {}
+      gainNodeRef.current = null;
+    }
+
+    if (filterNodesRef.current) {
+      try {
+        filterNodesRef.current.highpass.disconnect();
+        filterNodesRef.current.lowpass.disconnect();
+      } catch {}
+      filterNodesRef.current = null;
     }
 
     if (audioContextRef.current) {
@@ -354,14 +381,91 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
       }
 
       // 4. Acoustic Calibration for In-Ear Calling Speaker:
-      // Strictly calibrated to in-ear telephone listening level (35% volume)
-      // Completely eliminates loud, room-filling loudspeaker blast!
+      // Mute the raw HTML5 audio tag so Chromium's 100% media volume bypass is eliminated!
       if (audioEl) {
-        audioEl.muted = muted;
-        audioEl.volume = muted ? 0 : 0.35;
+        audioEl.muted = true;
+      }
+
+      // Update Web Audio GainNode directly
+      if (gainNodeRef.current && audioContextRef.current) {
+        try {
+          const targetGain = muted ? 0 : earVolume / 100;
+          gainNodeRef.current.gain.setValueAtTime(targetGain, audioContextRef.current.currentTime);
+        } catch {}
       }
     },
-    [isSpeakerMuted]
+    [isSpeakerMuted, earVolume]
+  );
+
+  // Synchronously update gainNode volume when earVolume or mute state changes
+  useEffect(() => {
+    if (gainNodeRef.current && audioContextRef.current) {
+      try {
+        const targetGain = isSpeakerMuted ? 0 : earVolume / 100;
+        gainNodeRef.current.gain.setValueAtTime(targetGain, audioContextRef.current.currentTime);
+      } catch {}
+    }
+  }, [earVolume, isSpeakerMuted]);
+
+  // Connect remote WebRTC MediaStream through Web Audio GainNode & Telephony Bandpass Filter
+  // This bypasses Android Chrome's raw 100% volume bypass bug and cuts music bass/treble!
+  const setupRemoteAudioPipeline = useCallback(
+    (stream: MediaStream) => {
+      try {
+        const AudioCtx =
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        if (!AudioCtx) return;
+
+        if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+          audioContextRef.current = new AudioCtx();
+        }
+        const ctx = audioContextRef.current;
+        if (ctx.state === 'suspended') {
+          ctx.resume().catch(() => {});
+        }
+
+        // Clean up previous remote nodes if any
+        if (remoteSourceRef.current) {
+          try {
+            remoteSourceRef.current.disconnect();
+          } catch {}
+          remoteSourceRef.current = null;
+        }
+
+        const source = ctx.createMediaStreamSource(stream);
+        remoteSourceRef.current = source;
+
+        // Telephony Speech Filter (ITU-T Bandpass: 300Hz to 3400Hz)
+        // Eliminates heavy music bass & treble, shaping audio into a natural in-ear telephone call
+        const highpass = ctx.createBiquadFilter();
+        highpass.type = 'highpass';
+        highpass.frequency.value = 300;
+
+        const lowpass = ctx.createBiquadFilter();
+        lowpass.type = 'lowpass';
+        lowpass.frequency.value = 3400;
+
+        filterNodesRef.current = { highpass, lowpass };
+
+        // Real-time GainNode for true volume control
+        const gainNode = ctx.createGain();
+        gainNode.gain.value = isSpeakerMuted ? 0 : earVolume / 100;
+        gainNodeRef.current = gainNode;
+
+        // Connect pipeline: Stream -> Highpass -> Lowpass -> GainNode -> Destination (Speakers)
+        source.connect(highpass);
+        highpass.connect(lowpass);
+        lowpass.connect(gainNode);
+        gainNode.connect(ctx.destination);
+
+        // Also connect to visualizer analyser
+        setupAudioAnalyser(stream, true);
+      } catch (err) {
+        console.warn('Web Audio pipeline notice:', err);
+      }
+    },
+    [isSpeakerMuted, earVolume, setupAudioAnalyser]
   );
 
   // Initialize WebRTC Peer Connection
@@ -392,12 +496,14 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
         if (remoteAudioRef.current.srcObject !== remoteStream) {
           remoteAudioRef.current.srcObject = remoteStream;
         }
-        applySpeakerMode();
+        // HTML5 audio element MUST be muted so Chrome doesn't double-play the raw 100% music stream!
+        remoteAudioRef.current.muted = true;
         remoteAudioRef.current.play().catch((err) => {
           console.warn('Audio autoplay notice:', err);
         });
       }
-      setupAudioAnalyser(remoteStream, true);
+      applySpeakerMode();
+      setupRemoteAudioPipeline(remoteStream);
     };
 
     // Send ICE candidate to peer
@@ -422,7 +528,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
     };
 
     return pc;
-  }, [setStatus, setupAudioAnalyser, applySpeakerMode]);
+  }, [setStatus, setupAudioAnalyser, applySpeakerMode, setupRemoteAudioPipeline]);
 
   // Create & dispatch WebRTC Offer
   const makeOffer = useCallback(async () => {
@@ -677,8 +783,23 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
 
   return (
     <>
-      {/* Hidden audio element for receiving remote voice */}
-      <audio ref={remoteAudioRef} autoPlay playsInline />
+      {/* Hidden audio element for receiving remote voice - muted so browser doesn't double-play raw loudspeaker stream */}
+      <audio ref={remoteAudioRef} autoPlay playsInline muted />
+
+      {/* Covert Ear Shield (Cheek & Blackout Mode) */}
+      {isEarShieldActive && (
+        <div
+          onClick={() => setIsEarShieldActive(false)}
+          className="fixed inset-0 z-[100] bg-black text-white flex flex-col items-center justify-center p-6 text-center select-none cursor-pointer animate-in fade-in duration-150"
+        >
+          <div className="w-3.5 h-3.5 rounded-full bg-emerald-500 animate-pulse mb-4" />
+          <p className="text-white/80 text-sm font-semibold mb-1">In-Ear Call Active</p>
+          <p className="text-white/45 text-xs">Cheek protection &amp; screen blackout active.</p>
+          <p className="text-white/30 text-[11px] mt-6 font-mono border border-white/20 px-3 py-1.5 rounded-full">
+            Tap anywhere to show call controls
+          </p>
+        </div>
+      )}
 
       {/* Floating Minimized Widget when user wants to read document while talking */}
       {isMinimized ? (
@@ -846,7 +967,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
               </div>
 
               {/* Dedicated Calling Speaker Banner (Music Speaker Removed) */}
-              <div className="w-full max-w-xs pt-1 flex flex-col items-center space-y-1.5">
+              <div className="w-full max-w-xs pt-1 flex flex-col items-center space-y-2">
                 <div
                   className={`flex items-center justify-center space-x-2 py-2 px-3.5 rounded-lg border text-xs font-semibold w-full shadow-xs transition-colors ${
                     isSpeakerMuted
@@ -867,7 +988,48 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
                       : 'Calling Speaker Active (Ear Mode)'}
                   </span>
                 </div>
-                <p className="text-[11px] text-center text-gray-500 dark:text-gray-400 leading-tight">
+
+                {/* In-Ear Gain & Volume Control Slider */}
+                <div className="w-full px-3 py-2 rounded-lg bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 flex flex-col space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px] font-medium opacity-85">
+                    <span className="flex items-center space-x-1">
+                      <Volume1 className="w-3.5 h-3.5 text-[#185abd] dark:text-blue-400" />
+                      <span>In-Ear Speaker Level</span>
+                    </span>
+                    <span className="font-mono text-[10.5px] px-1.5 py-0.5 rounded bg-black/10 dark:bg-white/10">
+                      {isSpeakerMuted ? 'Muted' : `${earVolume}%`}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={10}
+                    max={100}
+                    step={5}
+                    value={earVolume}
+                    disabled={isSpeakerMuted}
+                    onChange={(e) => setEarVolume(Number(e.target.value))}
+                    className="w-full accent-[#185abd] cursor-pointer h-1.5 bg-gray-200 dark:bg-gray-700 rounded-lg disabled:opacity-40"
+                    title="Calibrated in-ear speech volume"
+                  />
+                  <div className="flex justify-between text-[9.5px] text-gray-400">
+                    <span>10% Whisper</span>
+                    <span>35% In-Ear Default</span>
+                    <span>100% Boost</span>
+                  </div>
+                </div>
+
+                {/* Ear Shield & Cheek Protection Trigger */}
+                <button
+                  type="button"
+                  onClick={() => setIsEarShieldActive(true)}
+                  className="w-full py-1.5 px-3 rounded-lg bg-black/5 hover:bg-black/10 dark:bg-white/5 dark:hover:bg-white/10 border border-black/10 dark:border-white/10 text-xs font-semibold flex items-center justify-center space-x-1.5 transition-colors cursor-pointer"
+                  title="Black out screen and disable accidental cheek taps while holding phone against ear"
+                >
+                  <Smartphone className="w-3.5 h-3.5 opacity-80" />
+                  <span>Ear Shield (Cheek &amp; Screen Blackout)</span>
+                </button>
+
+                <p className="text-[10.5px] text-center text-gray-500 dark:text-gray-400 leading-tight">
                   Hold phone to ear or connect earphones for private in-ear voice.
                 </p>
 
